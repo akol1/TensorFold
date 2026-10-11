@@ -369,7 +369,7 @@ const Reply = struct {
             const at: i64 = if (call.get("index")) |ix| ix.int64() orelse 0 else 0;
             const item = r.calls.get(at) orelse blk: {
                 const id = textOf(call.get("id")) orelse (ids.make(r.a, "call_", 32) catch return error.Closed);
-                const name = textOf(function.get("name")) orelse "";
+                const name = @import("tool_specs.zig").toolName(r.a, call) catch return error.Closed;
                 const made = try r.open("function_call", id, name);
                 r.calls.put(r.a, at, made) catch return error.Closed;
                 break :blk made;

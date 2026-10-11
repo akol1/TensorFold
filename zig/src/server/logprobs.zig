@@ -4,6 +4,7 @@ const api = @import("engine_api");
 const json = @import("json.zig");
 const errors = @import("errors.zig");
 const Server = @import("server.zig").Server;
+const model_text = @import("model_text.zig");
 const Value = json.Value;
 const Cx = errors.Cx;
 const Allocator = std.mem.Allocator;
@@ -17,6 +18,14 @@ pub fn admit(srv: *Server, cx: *Cx, thinking: bool, think_budget: u32, count: u8
 
 /// ``choices[0].logprobs`` for the answer's tokens: after the first end-of-thinking token and dropped newlines.
 pub fn value(srv: *Server, cx: *Cx, a: Allocator, thinking: bool, tokens: []const u32, rows: []const api.LogprobRow) errors.Refused!Value {
+    return rowsValue(srv, cx, a, thinking, tokens, rows) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Template => return cx.other("the tokenizer could not decode logprob tokens"),
+        error.Refused => return error.Refused,
+    };
+}
+
+fn rowsValue(srv: *Server, cx: *Cx, a: Allocator, thinking: bool, tokens: []const u32, rows: []const api.LogprobRow) (model_text.Error || errors.Refused)!Value {
     if (rows.len < tokens.len) return cx.other("the engine gave fewer logprob rows than reply tokens");
     var start: usize = 0;
     if (thinking) {
@@ -43,7 +52,7 @@ pub fn value(srv: *Server, cx: *Cx, a: Allocator, thinking: bool, tokens: []cons
 }
 
 /// ``{token, logprob, bytes}``: the token's text, and its own bytes (a partial UTF-8 sequence kept whole).
-fn entry(srv: *Server, a: Allocator, id: u32, logprob: f32) Allocator.Error!*json.Object {
+fn entry(srv: *Server, a: Allocator, id: u32, logprob: f32) model_text.Error!*json.Object {
     const bytes = (try srv.text.tokenBytes(a, id)) orelse &.{};
     const o = try json.newObject(a);
     try o.put(a, "token", .{ .string = try srv.text.decode(a, &.{id}) });

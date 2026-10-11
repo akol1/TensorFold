@@ -21,8 +21,8 @@ pub const Text = struct {
     pub const VTable = struct {
         /// Ids of ``text``, special-token text included as its token; ``add_special`` adds what the tokenizer prepends.
         encode: *const fn (ctx: *anyopaque, a: Allocator, text: []const u8, add_special: bool) Error![]u32,
-        /// UTF-8 of ``ids`` with special tokens; bytes that end mid-character decode as U+FFFD, as Python's replace does.
-        decode: *const fn (ctx: *anyopaque, a: Allocator, ids: []const u32) Allocator.Error![]u8,
+        /// Decode UTF-8 with special tokens; incomplete bytes become U+FFFD, tokenizer failures return Template.
+        decode: *const fn (ctx: *anyopaque, a: Allocator, ids: []const u32) Error![]u8,
         /// The id of a token the vocabulary holds whole (``convert_tokens_to_ids``), else null.
         token_id: *const fn (ctx: *anyopaque, piece: []const u8) ?u32,
         /// A token's vocabulary string (``convert_ids_to_tokens``).
@@ -36,15 +36,15 @@ pub const Text = struct {
         template_source: *const fn (ctx: *anyopaque) []const u8,
         /// Whether an id is a special token (an added token flagged special); null: none are known.
         special: ?*const fn (ctx: *anyopaque, id: u32) bool = null,
-        /// A token's own bytes (a partial UTF-8 sequence kept whole) for logprob rows; null: the tokenizer can't say.
-        token_bytes: ?*const fn (ctx: *anyopaque, a: Allocator, id: u32) Allocator.Error!?[]u8 = null,
+        /// A token's exact bytes; null means context-dependent decoding, while tokenizer failures return Template.
+        token_bytes: ?*const fn (ctx: *anyopaque, a: Allocator, id: u32) Error!?[]u8 = null,
     };
 
     pub fn encode(t: Text, a: Allocator, text: []const u8, add_special: bool) Error![]u32 {
         return t.vtable.encode(t.ctx, a, text, add_special);
     }
 
-    pub fn decode(t: Text, a: Allocator, ids: []const u32) Allocator.Error![]u8 {
+    pub fn decode(t: Text, a: Allocator, ids: []const u32) Error![]u8 {
         return t.vtable.decode(t.ctx, a, ids);
     }
 
@@ -61,7 +61,7 @@ pub const Text = struct {
     }
 
     /// A token's own bytes, or null when this text cannot give them.
-    pub fn tokenBytes(t: Text, a: Allocator, id: u32) Allocator.Error!?[]u8 {
+    pub fn tokenBytes(t: Text, a: Allocator, id: u32) Error!?[]u8 {
         const f = t.vtable.token_bytes orelse return null;
         return f(t.ctx, a, id);
     }
@@ -77,6 +77,7 @@ pub const Text = struct {
     /// The chat template's ids, as ``apply_chat_template(tokenize=True)`` gives them.
     pub fn renderIds(t: Text, a: Allocator, messages: json.Value, options: RenderOptions, problem: *[]const u8) Error![]u32 {
         const text = try t.render(a, messages, options, problem);
+        defer a.free(text);
         return t.encode(a, text, false);
     }
 

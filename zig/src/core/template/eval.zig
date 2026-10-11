@@ -157,9 +157,26 @@ fn execFor(c: *Ctx, act: *Activation, f: *const ast.For) Error!void {
 fn args(c: *Ctx, act: *Activation, a: ast.Args) Error!struct { []Value, []Kw } {
     const pos = try c.rt.a.alloc(Value, a.pos.len);
     for (a.pos, pos) |e, *x| x.* = try eval(c, act, e);
-    const kw = try c.rt.a.alloc(Kw, a.kw.len);
-    for (a.kw, kw) |k, *x| x.* = .{ .name = k.name, .value = try eval(c, act, k.value) };
-    return .{ pos, kw };
+    if (a.dyn_kw == null) {
+        const kw = try c.rt.a.alloc(Kw, a.kw.len);
+        for (a.kw, kw) |k, *x| x.* = .{ .name = k.name, .value = try eval(c, act, k.value) };
+        return .{ pos, kw };
+    }
+    var kw: std.ArrayList(Kw) = .empty;
+    try kw.ensureTotalCapacity(c.rt.a, a.kw.len);
+    for (a.kw) |k| kw.appendAssumeCapacity(.{ .name = k.name, .value = try eval(c, act, k.value) });
+    if (a.dyn_kw) |expr| {
+        const expanded = try eval(c, act, expr);
+        if (expanded != .dict) return c.rt.fail("argument after ** must be a mapping", .{});
+        try kw.ensureUnusedCapacity(c.rt.a, expanded.dict.map.count());
+        for (expanded.dict.map.keys(), expanded.dict.map.values()) |name, value| {
+            for (kw.items[0..a.kw.len]) |existing| {
+                if (std.mem.eql(u8, name, existing.name)) return c.rt.fail("got multiple values for keyword argument '{s}'", .{name});
+            }
+            kw.appendAssumeCapacity(.{ .name = name, .value = value });
+        }
+    }
+    return .{ pos, kw.items };
 }
 
 fn applyFilters(c: *Ctx, act: *Activation, e: *const ast.Expr, hole: Value) Error!Value {

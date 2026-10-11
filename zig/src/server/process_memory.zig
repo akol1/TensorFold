@@ -5,7 +5,7 @@ const builtin = @import("builtin");
 pub const Snapshot = struct { physical_footprint_bytes: u64, lifetime_peak_physical_footprint_bytes: u64 };
 
 // Darwin's rusage_info_v4 ABI, including the UUID and trailing fields the kernel writes but we never publish.
-const RUsage = extern struct {
+pub const RUsage = extern struct {
     uuid: [16]u8,
     user_time: u64,
     system_time: u64,
@@ -47,11 +47,16 @@ const RUsage = extern struct {
 extern "c" fn proc_pid_rusage(pid: c_int, flavor: c_int, buffer: *anyopaque) c_int;
 extern "c" fn getpid() c_int;
 
+/// The existing Darwin ABI, for qualification counters without C translation or extra allocation.
+pub fn readUsage(info: *RUsage) bool {
+    if (builtin.os.tag != .macos) return false;
+    return proc_pid_rusage(getpid(), 4, info) == 0;
+}
 /// One kernel sample, including peaks between HTTP polls; null on unsupported platforms or failed reads.
 pub fn read() ?Snapshot {
     if (builtin.os.tag != .macos) return null;
     var info: RUsage = undefined;
-    if (proc_pid_rusage(getpid(), 4, &info) != 0) return null;
+    if (!readUsage(&info)) return null;
     return .{
         .physical_footprint_bytes = info.phys_footprint,
         .lifetime_peak_physical_footprint_bytes = info.lifetime_max_phys_footprint,

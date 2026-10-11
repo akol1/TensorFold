@@ -4,7 +4,6 @@ const json = @import("json.zig");
 const errors = @import("errors.zig");
 const http_body = @import("http_body.zig");
 const fields = @import("fields.zig");
-const messages_mod = @import("messages.zig");
 const openai = @import("openai.zig");
 const prompt = @import("prompt.zig");
 const routes = @import("routes.zig");
@@ -47,11 +46,11 @@ fn sendError(conn: *Conn, a: Allocator, message: []const u8, status: u16) void {
 }
 
 /// Rendered like the chat route renders, without generating: the prompt's token count.
-fn countTokens(srv: *Server, cx: *Cx, chat: Value) errors.Refused!usize {
+pub fn countTokens(srv: *Server, cx: *Cx, chat: Value) errors.Refused!usize {
     const thinking = try fields.thinkingFields(cx, chat, srv.effort_levels);
     const on = thinking.enable orelse srv.config.enable_thinking;
     const tools = try tool_specs.active(cx, chat.get("tools"), chat.get("tool_choice"));
-    const msgs = try messages_mod.normalize(cx, chat.get("messages"), "system", srv.needs_user_after_tool);
+    const msgs = try openai.validatedMessages(srv, cx, chat.get("messages"));
     const ids_ = prompt.renderIds(srv, cx, msgs, tools, on, srv.effortFor(thinking.effort), true) catch |e| switch (e) {
         error.Refused => return cx.other(cx.message),
         else => |x| return x,
@@ -275,7 +274,8 @@ const Reply = struct {
                     target.id = id.string;
                 };
                 const function = call.get("function") orelse Value.null;
-                target.name = std.mem.concat(r.a, u8, &.{ target.name, json.strOr(function.get("name")) }) catch return error.Closed;
+                const name = tool_specs.toolName(r.a, call) catch return error.Closed;
+                target.name = std.mem.concat(r.a, u8, &.{ target.name, name }) catch return error.Closed;
                 target.arguments = std.mem.concat(r.a, u8, &.{ target.arguments, json.strOr(function.get("arguments")) }) catch return error.Closed;
             };
         };
@@ -361,7 +361,7 @@ const Reply = struct {
             const b = try json.newObject(a);
             try b.put(a, "type", .{ .string = "tool_use" });
             try b.put(a, "id", call.get("id").?);
-            try b.put(a, "name", function.get("name").?);
+            try b.put(a, "name", .{ .string = try tool_specs.toolName(a, call) });
             try b.put(a, "input", args);
             try content.append(a, .{ .object = b });
         };

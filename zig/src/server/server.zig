@@ -240,7 +240,13 @@ pub const Server = struct {
     fn callForm(srv: *Server, cx: *Cx) errors.Refused!?Form {
         const probe = (try json.parse(cx.a, "[{\"role\": \"user\", \"content\": \"x\"}, {\"role\": \"assistant\", \"content\": \"\", \"tool_calls\": [{\"id\": \"call_0\", \"type\": \"function\", \"function\": {\"name\": \"tfprobe_fn\", \"arguments\": {}}}]}]")).ok;
         var scratch: Cx = .{ .a = cx.a };
-        const text = if (prompt.renderIds(srv, &scratch, probe, &.{}, false, null, false)) |ids| try srv.text.decode(cx.a, ids) else |_| "";
+        const text = if (prompt.renderIds(srv, &scratch, probe, &.{}, false, null, false)) |ids|
+            srv.text.decode(cx.a, ids) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Template => return cx.other("the tokenizer could not decode the tool call probe"),
+            }
+        else |_|
+            "";
         if (std.mem.lastIndexOf(u8, text, "tfprobe_fn")) |at| {
             var best: ?usize = null;
             var opener: []const u8 = "";

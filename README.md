@@ -30,6 +30,13 @@ curl -fsS http://127.0.0.1:8080/v1/chat/completions \
   -d '{"model":"local-model","messages":[{"role":"user","content":"Say hello in one sentence."}],"max_tokens":128,"temperature":0}'
 ```
 
+## DeepSeek V4.1 contributor draft
+
+The [experimental resident Metal implementation](docs/deepseek-v41.md) is draft-only,
+not a qualified model. Its retained independent whole-model comparison fails the
+unchanged 1% numerical gate. See the guide for prerequisites, exact reproduction
+inputs, limitations and the conditions required before readiness or merge.
+
 ## Living Weights (experimental)
 
 Living Weights teaches a running model new facts. Start a Nemotron 3.5 Lightning server with `--slide`, tell it

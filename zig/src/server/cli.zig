@@ -55,6 +55,7 @@ pub const flags = [_]Flag{
     .{ .name = "--vision-max-images" },
     .{ .name = "--vision-image-tokens" },
     .{ .name = "--context", .native = true },
+    .{ .name = "--engram-table-dir", .native = !cuda_build },
     .{ .name = "--speed-up", .native = true },
     .{ .name = "--max-tokens", .native = true },
     .{ .name = "--temperature", .native = true },
@@ -129,6 +130,7 @@ pub const Args = struct {
     metrics_open: bool = false,
     dashboard: bool = false,
     context: ?i64 = null,
+    engram_table_dir: ?[]const u8 = null,
     speed_up: ?[]const u8 = null, // speed-up mode: this Mac's settings for the two-Mac link (Flash Next)
     prompt_cache_gib: ?f64 = null, // kept prompt states' budget (0: none; null: what 70% of RAM leaves past the loaded server)
     prompt_cache_over_cap: bool = false, // a --prompt-cache-gib past that is kept, not refused
@@ -250,6 +252,11 @@ fn apply(a: Allocator, out: *Args, name: []const u8, value: ?[]const u8, u: *Usa
         out.chat_template = v;
         return;
     }
+    if (is(name, "--engram-table-dir")) {
+        if (v.len == 0) return fail(u, a, "argument --engram-table-dir: expected a directory", .{});
+        out.engram_table_dir = v;
+        return;
+    }
     if (is(name, "--host")) out.host = v else if (is(name, "--port")) {
         const p = try int(u, a, name, v);
         if (p < 0 or p > 65535) return fail(u, a, "argument --port: invalid port: '{s}'", .{v});
@@ -342,6 +349,7 @@ pub fn request(a: Allocator, dir: []const u8, model_type: []const u8, args: Args
         .dir = dir,
         .model_type = model_type,
         .context = args.context,
+        .engram_table_dir = args.engram_table_dir,
         .lanes = parallel(args.parallel) orelse 8,
         .lanes_fixed = parallelFixed(args.parallel),
         .drafts = !args.no_drafts,

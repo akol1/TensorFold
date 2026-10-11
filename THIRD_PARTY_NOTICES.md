@@ -76,6 +76,35 @@ checked bit for bit against ExLlamaV3's dequantization.
 
 Flash Next's optional int8 and int4 KV caches (`families/qwen4_exp/cuda/kvcache.py`) follow the cache quantization scheme of [ExLlamaV3](https://github.com/turboderp-org/exllamav3) `-cq 8` and `-cq 4` (MIT License, Copyright (c) 2025 Turboderp, text below): groups of 32, one fp16 absmax scale per group, the group rotated by a 32-point Hadamard, midpoint-grid codes, `compand_a == 0`. 8-bit stores each code as a signed int8 (`q - 128`). 4-bit stores two unsigned codes per byte, low nibble first (the same bits as ExLlamaV3's little-endian packing, a uint8 tensor rather than their uint32 words). Their dequantizer folds another `1/sqrt(32)` into the scale and applies the unnormalized butterfly on the way out; this cache applies the normalized H32 to the query and to the merged output instead, and leaves the stored codes rotated. Scales match their quantizer bit for bit. Reconstructed values agree within fp16/bf16 rounding (under 0.01 on random groups), not bit for bit. The quantizer and the attention dequant are written for TensorFold and checked against an independent reference of that arithmetic.
 
+## Native DeepSeek V4.1 and Metal EXL3
+
+The native `zig/src/families/deepseek_v41/` implementation and source Metal kernels follow
+[DeepSeek-V4.1-Flash's official inference](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/tree/2cba9e42aa026125f3ed06c6d98c1db82f7ca027/inference),
+MIT License, Copyright (c) 2023 DeepSeek. The offline Engram token-map builder
+`tools/zig/dsv41_token_map.py` implements that revision's normalization, PCG64 multipliers and prime bucket layout.
+The independent CPU qualification arithmetic is in `zig/tests/deepseek_v41_reference/`.
+
+`zig/src/server/deepseek_v41_official.jinja` is the unchanged official chat template from the same revision;
+its text, token-ID and tool-decoding fixtures are generated from DeepSeek's official encoder.
+The MIT license text below applies to these adaptations and the template.
+
+The bounded `zig/src/families/deepseek_v41/fixtures/hc_attention_rms.json` regression
+contains model-derived numeric rows and independently captured operator boundaries from
+that pinned MIT-licensed checkpoint. Its embedded provenance identifies the token, layer,
+source revision, encodings and target columns; it is not a full model shard or trace.
+`zig/tests/deepseek_v41_reference/rope_frequencies.json` contains 64 formula-derived
+frequency values with extraction provenance. The draft's historical evidence is labeled
+separately from current-branch verification.
+The RMS mean-boundary test uses a constructed BF16 row `[3, 0, ...]` of width 5,120
+and a uniform constructed FP32 weight `0x3c65de29`, not a captured model coefficient.
+Its expected BF16 tie was exercised through the pinned official `RMSNorm.forward`
+on PyTorch `2.13.0a0+9186a08b2c.nv26.07` / CUDA 13.3. It tests an operator boundary,
+not source-coefficient injection into whole-model qualification.
+
+The native `zig/src/core/exl3_projection*.zig` decoder and `zig/kernels/metal/core/exl3_projection.metal`
+separately implement ExLlamaV3's format and codebooks under the Turboderp attribution above.
+No captured CUDA/Triton binary kernel assets, full model shards or binary traces are bundled.
+
 ## Vendored code and weights
 
 `src/tensorfold/drafters/vendor/z_lab_dflash/model_mlx.py` is the unmodified `dflash/model_mlx.py` from

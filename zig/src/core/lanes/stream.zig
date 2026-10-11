@@ -64,10 +64,12 @@ pub fn detectLoop(emitted: []const u32) ?u32 {
     return cycleAt(emitted, &.{}, emitted.len);
 }
 
-/// A stop-string check over the emitted tokens (the server's StopPolicy decodes their tail).
+/// Check emitted-token stop strings; decoder/allocation errors fail the host instead of missing a stop.
 pub const StopCheck = struct {
     ptr: *anyopaque,
-    check: *const fn (ptr: *anyopaque, emitted: []const u32) bool,
+    check: *const fn (ptr: *anyopaque, emitted: []const u32) Error!bool,
+
+    pub const Error = error{ Template, OutOfMemory };
 };
 
 /// The host's answer to whether the stream's request was cancelled, asked between prompt chunks.
@@ -352,7 +354,7 @@ pub const Stream = struct {
                 }
             }
             const fire = if (s.loop_guard and s.think_open and s.think_end >= 0 and s.loop_period == null) detectLoop(s.emitted()) else null;
-            if (s.isEos(t) or s.stopped()) {
+            if (s.isEos(t) or try s.stopped()) {
                 s.finished = true;
                 s.reason = .stop;
             } else if (fire) |period| {
@@ -377,7 +379,7 @@ pub const Stream = struct {
         return landed;
     }
 
-    fn stopped(s: *const Stream) bool {
+    fn stopped(s: *const Stream) StopCheck.Error!bool {
         const c = s.stop_check orelse return false;
         return c.check(c.ptr, s.emitted());
     }
@@ -395,6 +397,29 @@ test "commit stops at eos and length" {
     try std.testing.expectEqual(@as(usize, 2), try s.commit(gpa, &.{ 5, 9, 7 }, &.{}));
     try std.testing.expectEqualSlices(u32, &.{ 5, 9 }, s.emitted());
     try std.testing.expect(s.finished and s.reason == .stop);
+}
+
+test "stop callback errors propagate instead of becoming a miss or a normal stop" {
+    const Check = struct {
+        fn fail(ptr: *anyopaque, _: []const u32) StopCheck.Error!bool {
+            const failure: *StopCheck.Error = @ptrCast(@alignCast(ptr));
+            return failure.*;
+        }
+    };
+    const gpa = std.testing.allocator;
+    for ([_]StopCheck.Error{ error.OutOfMemory, error.Template }) |failure| {
+        var stored = failure;
+        var s = try Stream.init(gpa, .{
+            .id = "stop-error",
+            .prompt = &.{1},
+            .max_new = 3,
+            .stop_check = .{ .ptr = &stored, .check = Check.fail },
+        });
+        defer s.deinit(gpa);
+        try std.testing.expectError(failure, s.commit(gpa, &.{ 5, 6 }, &.{}));
+        try std.testing.expectEqualSlices(u32, &.{5}, s.emitted());
+        try std.testing.expect(!s.finished and s.reason == .none);
+    }
 }
 
 test "a logprob stream lands a row with each token it lands, and refuses tokens without rows" {

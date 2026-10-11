@@ -15,17 +15,27 @@ pub const deltas = tool_streaming.deltas;
 pub const wrapCalls = tool_streaming.wrapCalls;
 
 const Error = error{ Invalid, OutOfMemory };
-const Call = struct { name: []const u8, arguments: Value };
-const Envelope = struct { start: usize, end: usize, payload: []const u8 };
+const Call = struct { name: []const u8, arguments: Value, namespaced: bool = false };
+const Envelope = struct { start: usize, end: usize, payload: []const u8, complete: bool = true };
 
 pub const Parsed = struct { content: []const u8, calls: ?[]Value };
 
-const dsml_open = "<\u{ff5c}DSML\u{ff5c}tool_calls>";
-const dsml_close = "</\u{ff5c}DSML\u{ff5c}tool_calls>";
-const invoke_open = "<\u{ff5c}DSML\u{ff5c}invoke name=\"";
-const invoke_close = "</\u{ff5c}DSML\u{ff5c}invoke>";
-const param_open = "<\u{ff5c}DSML\u{ff5c}parameter name=\"";
-const param_close = "</\u{ff5c}DSML\u{ff5c}parameter>";
+const Dsml = struct { open: []const u8, close: []const u8, invoke_open: []const u8, invoke_close: []const u8, param_open: []const u8, param_close: []const u8 };
+const dsml = [_]Dsml{
+    .{ .open = "<｜DSML｜tool_calls>", .close = "</｜DSML｜tool_calls>", .invoke_open = "<｜DSML｜invoke name=\"", .invoke_close = "</｜DSML｜invoke>", .param_open = "<｜DSML｜parameter name=\"", .param_close = "</｜DSML｜parameter>" },
+    .{ .open = "<｜DSML｜ calls>", .close = "</｜DSML｜ calls>", .invoke_open = "<｜DSML｜ invoke name=\"", .invoke_close = "</｜DSML｜ invoke>", .param_open = "<｜DSML｜ parameter name=\"", .param_close = "</｜DSML｜ parameter>" },
+};
+
+const DsmlOpening = struct { start: usize, open: []const u8, close: []const u8 };
+
+/// The next DSML envelope opener, before any nested markup is interpreted.
+pub fn dsmlOpening(text: []const u8, from: usize) ?DsmlOpening {
+    var first: ?DsmlOpening = null;
+    for (dsml) |tags| if (find(text, tags.open, from)) |at| {
+        if (first == null or at < first.?.start) first = .{ .start = at, .open = tags.open, .close = tags.close };
+    };
+    return first;
+}
 
 fn findCI(hay: []const u8, needle: []const u8, from: usize) ?usize {
     if (from > hay.len) return null;
@@ -53,12 +63,20 @@ fn envelopes(a: Allocator, text: []const u8) Allocator.Error![]Envelope {
     var found: std.ArrayList(Envelope) = .empty;
     var pos: usize = 0;
     while (findCI(text, "<tool_call>", pos)) |s| {
+        if (dsmlOpening(text, pos)) |outer| if (outer.start < s) {
+            pos = (find(text, outer.close, outer.start + outer.open.len) orelse break) + outer.close.len;
+            continue;
+        };
         const e = findCI(text, "</tool_call>", s + 11) orelse break;
         try found.append(a, .{ .start = s, .end = e + 12, .payload = strip(text[s + 11 .. e]) });
         pos = e + 12;
     }
     pos = 0;
     while (std.mem.indexOfScalarPos(u8, text, pos, '<')) |s| {
+        if (dsmlOpening(text, pos)) |outer| if (outer.start <= s) {
+            pos = (find(text, outer.close, outer.start + outer.open.len) orelse break) + outer.close.len;
+            continue;
+        };
         pos = s + 1;
         var j = s + 1;
         if (j >= text.len or !(std.ascii.isAlphabetic(text[j]) or text[j] == '_')) continue;
@@ -72,15 +90,21 @@ fn envelopes(a: Allocator, text: []const u8) Allocator.Error![]Envelope {
     }
     pos = 0;
     while (find(text, "<|tool_call>", pos)) |s| {
+        if (dsmlOpening(text, pos)) |outer| if (outer.start < s) {
+            pos = (find(text, outer.close, outer.start + outer.open.len) orelse break) + outer.close.len;
+            continue;
+        };
         const e = find(text, "<tool_call|>", s + 12) orelse break;
         try found.append(a, .{ .start = s, .end = e + 12, .payload = strip(text[s + 12 .. e]) });
         pos = e + 12;
     }
     pos = 0;
-    while (find(text, dsml_open, pos)) |s| {
-        const e = find(text, dsml_close, s + dsml_open.len) orelse break;
-        try found.append(a, .{ .start = s, .end = e + dsml_close.len, .payload = text[s .. e + dsml_close.len] });
-        pos = e + dsml_close.len;
+    while (dsmlOpening(text, pos)) |outer| {
+        const s = outer.start;
+        const e = find(text, outer.close, s + outer.open.len);
+        const end = if (e) |at| at + outer.close.len else text.len;
+        try found.append(a, .{ .start = s, .end = end, .payload = text[s..end], .complete = e != null });
+        pos = end;
     }
     std.mem.sort(Envelope, found.items, {}, struct {
         fn less(_: void, x: Envelope, y: Envelope) bool {
@@ -102,23 +126,26 @@ pub fn parse(a: Allocator, text: []const u8, tools: []const Value, max_calls: ?u
         const name = try tool_specs.toolName(a, tool);
         try known.put(a, try std.ascii.allocLowerString(a, name), name);
     }
+    if (try bareCalls(a, text, &known, max_calls)) |calls| return .{ .content = "", .calls = calls };
     const schemas = try tool_params.schemas(a, tools);
     const envs = try envelopes(a, text);
-    if (envs.len == 0) {
-        if (try bareCalls(a, text, &known, max_calls)) |calls| return .{ .content = "", .calls = calls };
-        return .{ .content = text, .calls = null };
-    }
+    if (envs.len == 0) return .{ .content = text, .calls = null };
     var calls: std.ArrayList(Value) = .empty;
     var residue: std.ArrayList(u8) = .empty;
     var cursor: usize = 0;
     for (envs) |env| {
         try residue.appendSlice(a, text[cursor..env.start]);
         cursor = env.end;
+        if (!env.complete) {
+            try residue.appendSlice(a, text[env.start..env.end]);
+            continue;
+        }
         if (max_calls) |m| if (calls.items.len >= m) continue;
         const parsed: ?[]Call = blk: {
-            if (std.mem.startsWith(u8, env.payload, dsml_open)) {
-                const inner = env.payload[dsml_open.len .. env.payload.len - dsml_close.len];
-                break :blk dsmlCalls(a, inner) catch |e| switch (e) {
+            for (dsml) |tags| {
+                if (!std.mem.startsWith(u8, env.payload, tags.open)) continue;
+                const inner = env.payload[tags.open.len .. env.payload.len - tags.close.len];
+                break :blk dsmlCalls(a, inner, tags) catch |e| switch (e) {
                     error.OutOfMemory => return error.OutOfMemory,
                     error.Invalid => null,
                 };
@@ -138,12 +165,13 @@ pub fn parse(a: Allocator, text: []const u8, tools: []const Value, max_calls: ?u
             if ((try callName(a, c, &known)) == null) break false;
         } else true else false;
         if (!good) {
-            // a malformed or unoffered call stays text when calls are unlimited, and drops out of a one-call reply
-            if (max_calls == null) try residue.appendSlice(a, text[env.start..env.end]);
+            // V4.1 malformed calls stay text even under a one-call policy.
+            if (max_calls == null or std.mem.startsWith(u8, env.payload, dsml[1].open))
+                try residue.appendSlice(a, text[env.start..env.end]);
             continue;
         }
         for (parsed.?) |c| {
-            if (max_calls == null or calls.items.len < max_calls.?) try calls.append(a, try openaiCall(a, (try callName(a, c, &known)).?, c.arguments));
+            if (max_calls == null or calls.items.len < max_calls.?) try calls.append(a, try openaiCall(a, (try callName(a, c, &known)).?, c.arguments, c.namespaced));
         }
     }
     try residue.appendSlice(a, text[cursor..]);
@@ -155,6 +183,10 @@ pub fn closeCall(a: Allocator, text: []const u8, tools: []const Value) Allocator
     var pos: usize = 0;
     // the opener ``envelopes`` leaves without a closer, so the one appended pairs with it
     const start = while (findCI(text, "<tool_call>", pos)) |s| {
+        if (dsmlOpening(text, pos)) |outer| if (outer.start < s) {
+            pos = (find(text, outer.close, outer.start + outer.open.len) orelse return "") + outer.close.len;
+            continue;
+        };
         pos = (findCI(text, "</tool_call>", s + 11) orelse break s) + 12;
     } else return "";
     const block = text[start + 11 ..];
@@ -180,14 +212,16 @@ fn callName(a: Allocator, c: Call, known: *const std.StringArrayHashMapUnmanaged
 }
 
 /// ``_openai_tool_call``: the call under ``name`` (``callName``), arguments as compact JSON.
-fn openaiCall(a: Allocator, name: []const u8, arguments: Value) Allocator.Error!Value {
+fn openaiCall(a: Allocator, name: []const u8, arguments: Value, namespaced: bool) Allocator.Error!Value {
     const function = try json.newObject(a);
-    try function.put(a, "name", .{ .string = name });
+    const namespace_end = if (namespaced) std.mem.indexOf(u8, name, "::") else null;
+    try function.put(a, "name", .{ .string = if (namespace_end) |at| name[at + 2 ..] else name });
     try function.put(a, "arguments", .{ .string = try json.stringify(a, arguments, .{ .ascii = false, .compact = true }) });
     const call = try json.newObject(a);
     try call.put(a, "id", .{ .string = try ids.make(a, "call_", 24) });
     try call.put(a, "type", .{ .string = "function" });
     try call.put(a, "function", .{ .object = function });
+    if (namespace_end) |at| try call.put(a, "namespace", .{ .string = name[0..at] });
     return .{ .object = call };
 }
 
@@ -214,7 +248,7 @@ fn bareCalls(a: Allocator, text: []const u8, known: *const std.StringArrayHashMa
         const c = parsed orelse return null;
         // bare JSON naming a tool the request did not offer is a structured answer, the reply's content
         const name = known.get(try std.ascii.allocLowerString(a, c.name)) orelse return null;
-        try calls.append(a, try openaiCall(a, name, c.arguments));
+        try calls.append(a, try openaiCall(a, name, c.arguments, false));
     }
     return if (calls.items.len > 0) calls.items else null;
 }
@@ -454,37 +488,44 @@ fn gemmaCall(a: Allocator, block: []const u8) Error!?Call {
 }
 
 /// Every invoke of a DSML block, or Invalid when anything in it is not a well-formed invoke.
-fn dsmlCalls(a: Allocator, block: []const u8) Error![]Call {
+fn dsmlCalls(a: Allocator, block: []const u8, tags: Dsml) Error![]Call {
     var calls: std.ArrayList(Call) = .empty;
     var at: usize = 0;
     var pos: usize = 0;
-    while (find(block, invoke_open, pos)) |s| {
+    while (find(block, tags.invoke_open, pos)) |s| {
         pos = s + 1;
-        const name_start = s + invoke_open.len;
-        const q = std.mem.indexOfScalarPos(u8, block, name_start, '"') orelse continue;
+        const name_start = s + tags.invoke_open.len;
+        const q = (if (std.mem.eql(u8, tags.open, dsml[1].open))
+            find(block, "\">", name_start)
+        else
+            std.mem.indexOfScalarPos(u8, block, name_start, '"')) orelse continue;
         if (!std.mem.startsWith(u8, block[q..], "\">")) continue;
-        const e = find(block, invoke_close, q + 2) orelse continue;
+        const e = find(block, tags.invoke_close, q + 2) orelse continue;
         if (!allSpace(block[at..s])) return error.Invalid;
-        at = e + invoke_close.len;
+        at = e + tags.invoke_close.len;
         pos = at;
         const body = block[q + 2 .. e];
         const arguments = try json.newObject(a);
         var p: usize = 0;
         var kept: usize = 0;
         var residue: std.ArrayList(u8) = .empty;
-        while (find(body, param_open, p)) |ps| {
+        while (find(body, tags.param_open, p)) |ps| {
             p = ps + 1;
-            const ns = ps + param_open.len;
-            const nq = std.mem.indexOfScalarPos(u8, body, ns, '"') orelse continue;
+            const ns = ps + tags.param_open.len;
+            const nq = (if (std.mem.eql(u8, tags.open, dsml[1].open))
+                find(body, "\" string=\"", ns)
+            else
+                std.mem.indexOfScalarPos(u8, body, ns, '"')) orelse continue;
             const flag = body[nq..];
             const is_string = std.mem.startsWith(u8, flag, "\" string=\"true\">");
             if (!is_string and !std.mem.startsWith(u8, flag, "\" string=\"false\">")) continue;
             const v_start = nq + (if (is_string) "\" string=\"true\">".len else "\" string=\"false\">".len);
-            const pe = find(body, param_close, v_start) orelse continue;
+            const pe = find(body, tags.param_close, v_start) orelse continue;
             const value = body[v_start..pe];
             try residue.appendSlice(a, body[kept..ps]);
-            kept = pe + param_close.len;
+            kept = pe + tags.param_close.len;
             p = kept;
+            if (std.mem.eql(u8, tags.open, dsml[1].open) and arguments.contains(body[ns..nq])) return error.Invalid;
             if (is_string) {
                 try arguments.put(a, body[ns..nq], .{ .string = value });
             } else switch (try json.parseText(a, value)) {
@@ -494,7 +535,7 @@ fn dsmlCalls(a: Allocator, block: []const u8) Error![]Call {
         }
         try residue.appendSlice(a, body[kept..]);
         if (!allSpace(residue.items)) return error.Invalid;
-        try calls.append(a, .{ .name = strip(block[name_start..q]), .arguments = .{ .object = arguments } });
+        try calls.append(a, .{ .name = strip(block[name_start..q]), .arguments = .{ .object = arguments }, .namespaced = std.mem.eql(u8, tags.open, dsml[1].open) });
     }
     if (calls.items.len == 0 or !allSpace(block[at..])) return error.Invalid;
     return calls.items;

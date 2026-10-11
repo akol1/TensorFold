@@ -133,6 +133,10 @@ pub fn run(gpa: Allocator, io: std.Io, args: cli.Args, s: Setup) u8 {
         std.debug.print("tensorfold: --loop-guard is not supported by this native engine\n", .{});
         return 2;
     }
+    if (args.thinking_budget > 0 and !srv.info.thinking_budget) {
+        std.debug.print("tensorfold: --thinking-budget is not supported by this native engine\n", .{});
+        return 2;
+    }
     if (raiseOpenFileLimit()) |r| log.line("open-file limit raised: soft {d} -> {d}", .{ r[0], r[1] });
     const address = resolve(io, args.host, args.port) orelse {
         std.debug.print("tensorfold: cannot resolve --host {s}\n", .{args.host});

@@ -237,6 +237,7 @@ pub const Host = struct {
     const Ctx = struct {
         h: *Host,
         job: *Job,
+        failure: ?api.Stop.Error = null,
 
         fn prefilled(ctx: *anyopaque) void {
             const c: *Ctx = @ptrCast(@alignCast(ctx));
@@ -264,9 +265,15 @@ pub const Host = struct {
             var matched = false;
             var n: usize = 0;
             for (toks) |t| { // stop strings are checked after each token, as the lane core does
-                job.emitted.append(c.h.gpa, t) catch return true;
+                job.emitted.append(c.h.gpa, t) catch |err| {
+                    c.failure = err;
+                    return true;
+                };
                 n += 1;
-                if (job.request.stop) |s| if (s.check(s.ctx, job.emitted.items)) {
+                if (job.request.stop) |s| if (s.check(s.ctx, job.emitted.items) catch |err| {
+                    c.failure = err;
+                    return true;
+                }) {
                     matched = true;
                     break;
                 };
@@ -349,6 +356,10 @@ pub const Host = struct {
             .cancelled => .cancelled,
         };
         fin.stats = .{ .rounds = res.rounds, .drafted = res.drafted, .accepted = res.accepted, .min_rows = res.min_rows, .prefill_seconds = if (job.prefilled) |done| @as(f64, @floatFromInt(@as(i64, @intCast(@max(0, done - job.began))))) / 1e9 else null };
+        if (c.failure) |err| {
+            fin.reason = .failed;
+            fin.message = @errorName(err);
+        }
     }
 };
 

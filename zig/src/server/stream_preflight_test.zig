@@ -10,21 +10,33 @@ const responses_translate = @import("responses_translate.zig");
 const errors = @import("errors.zig");
 const Conn = @import("http_conn.zig").Conn;
 
-/// Bytes as tokens; every prompt renders as "prompt" (6 tokens).
+/// Unicode scalars as tokens; prompts are six tokens unless the official V41 renderer is selected.
 const TestText = struct {
-    fn text(t: *@This()) model_text.Text {
+    v41: bool = false,
+    pub fn text(t: *@This()) model_text.Text {
         return .{ .ctx = t, .vtable = &.{ .encode = encode, .decode = decode, .token_id = tokenId, .token_string = tokenString, .vocab_size = vocabSize, .eos_ids = eosIds, .render = render, .template_source = templateSource } };
     }
 
-    fn encode(_: *anyopaque, a: std.mem.Allocator, input: []const u8, _: bool) model_text.Error![]u32 {
-        const ids = try a.alloc(u32, input.len);
-        for (input, ids) |byte, *id| id.* = byte;
+    pub fn encode(_: *anyopaque, a: std.mem.Allocator, input: []const u8, _: bool) model_text.Error![]u32 {
+        const view = std.unicode.Utf8View.init(input) catch return error.Template;
+        const count = std.unicode.utf8CountCodepoints(input) catch return error.Template;
+        const ids = try a.alloc(u32, count);
+        var it = view.iterator();
+        for (ids) |*id| id.* = it.nextCodepoint().?;
         return ids;
     }
 
     fn decode(_: *anyopaque, a: std.mem.Allocator, ids: []const u32) std.mem.Allocator.Error![]u8 {
-        const decoded = try a.alloc(u8, ids.len);
-        for (ids, decoded) |id, *byte| byte.* = @intCast(id);
+        var count: usize = 0;
+        var scalar: [4]u8 = undefined;
+        for (ids) |id| count += std.unicode.utf8Encode(@intCast(id), &scalar) catch unreachable;
+        const decoded = try a.alloc(u8, count);
+        var offset: usize = 0;
+        for (ids) |id| {
+            const size = std.unicode.utf8Encode(@intCast(id), &scalar) catch unreachable;
+            @memcpy(decoded[offset..][0..size], scalar[0..size]);
+            offset += size;
+        }
         return decoded;
     }
 
@@ -44,18 +56,29 @@ const TestText = struct {
         return &.{};
     }
 
-    fn render(_: *anyopaque, a: std.mem.Allocator, _: json.Value, _: model_text.RenderOptions, _: *[]const u8) model_text.Error![]u8 {
-        return a.dupe(u8, "prompt");
+    fn render(ctx: *anyopaque, a: std.mem.Allocator, messages: json.Value, options: model_text.RenderOptions, problem: *[]const u8) model_text.Error![]u8 {
+        const t: *TestText = @ptrCast(@alignCast(ctx));
+        if (!t.v41) return a.dupe(u8, "prompt");
+        const v41 = @import("deepseek_v41_text.zig");
+        const hf = @import("hf_text.zig");
+        var context: std.json.ObjectMap = .empty;
+        try context.put(a, "enable_thinking", .{ .bool = options.enable_thinking });
+        const prepared = try v41.prepare(a, messages, problem);
+        return @import("template").renderChat(a, @embedFile("deepseek_v41_official.jinja"), try hf.toStd(a, prepared), if (options.tools) |tools| try hf.toStd(a, tools) else .null, .{ .object = context }, options.add_generation_prompt, null) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            return error.Template;
+        };
     }
 
-    fn templateSource(_: *anyopaque) []const u8 {
-        return "";
+    fn templateSource(ctx: *anyopaque) []const u8 {
+        const t: *TestText = @ptrCast(@alignCast(ctx));
+        return if (t.v41) @embedFile("deepseek_v41_official.jinja") else "";
     }
 };
 
 /// An 8-token window whose engine answers "hi" at once.
 const HiEngine = struct {
-    fn engine(e: *@This()) api.Engine {
+    pub fn engine(e: *@This()) api.Engine {
         return .{ .ctx = e, .vtable = &.{ .info = info, .submit = submit, .cancel = cancel, .status = status, .memory = memory } };
     }
 
@@ -89,8 +112,12 @@ const CallEngine = struct {
         for (reply, &out) |byte, *id| id.* = byte;
         break :blk out;
     };
+    tokens: []const u32 = &ids,
+    batched: bool = false,
+    prompt: [4096]u32 = undefined,
+    prompt_len: usize = 0,
 
-    fn engine(e: *@This()) api.Engine {
+    pub fn engine(e: *@This()) api.Engine {
         return .{ .ctx = e, .vtable = &.{ .info = info, .submit = submit, .cancel = HiEngine.cancel, .status = HiEngine.status, .memory = HiEngine.memory } };
     }
 
@@ -98,9 +125,14 @@ const CallEngine = struct {
         return .{ .context_window = 4096 };
     }
 
-    fn submit(_: *anyopaque, id: api.Id, _: *const api.Request, sink: api.Sink) api.SubmitError!void {
+    fn submit(ctx: *anyopaque, id: api.Id, request: *const api.Request, sink: api.Sink) api.SubmitError!void {
+        const e: *CallEngine = @ptrCast(@alignCast(ctx));
+        e.prompt_len = request.prompt.len;
+        @memcpy(e.prompt[0..e.prompt_len], request.prompt);
         sink.event(sink.ctx, id, &.{ .prefilled = 0 });
-        for (0..ids.len) |i| sink.event(sink.ctx, id, &.{ .tokens = ids[i..][0..1] });
+        if (e.batched) {
+            sink.event(sink.ctx, id, &.{ .tokens = e.tokens });
+        } else for (0..e.tokens.len) |i| sink.event(sink.ctx, id, &.{ .tokens = e.tokens[i..][0..1] });
         sink.event(sink.ctx, id, &.{ .finished = .{ .reason = .stop } });
     }
 };
@@ -115,17 +147,40 @@ const Seen = struct {
     context_code: bool = false,
     label: ?enum { exact, greedy } = null,
     preparing: i64 = 0,
-    text: [64]u8 = undefined, // the streamed delta content, or the whole reply's message content
+    text: [4096]u8 = undefined, // bounded complete content for legacy-envelope regressions
     text_len: usize = 0,
     calls: usize = 0, // the tool calls the stream started, or the whole reply's tool calls
+    got_error: bool = false,
+    arguments: [1024]u8 = undefined,
+    arguments_len: usize = 0,
+    argument_fragments: usize = 0,
+    reasoning: [256]u8 = undefined,
+    reasoning_len: usize = 0,
 
-    fn content(c: *const Seen) []const u8 {
+    fn keepArguments(c: *Seen, call: json.Value) void {
+        const f = call.get("function") orelse return;
+        const args = f.strField("arguments") orelse return;
+        if (args.len > 0) c.argument_fragments += 1;
+        const n = @min(args.len, c.arguments.len - c.arguments_len);
+        @memcpy(c.arguments[c.arguments_len..][0..n], args[0..n]);
+        c.arguments_len += n;
+    }
+
+    fn keepReasoning(c: *Seen, value: json.Value) void {
+        if (value != .string) return;
+        const n = @min(value.string.len, c.reasoning.len - c.reasoning_len);
+        @memcpy(c.reasoning[c.reasoning_len..][0..n], value.string[0..n]);
+        c.reasoning_len += n;
+    }
+
+    pub fn content(c: *const Seen) []const u8 {
         return c.text[0..c.text_len];
     }
 
     fn keep(c: *Seen, part: json.Value) void {
         if (part != .string) return;
-        const n = @min(part.string.len, c.text.len - c.text_len);
+        std.debug.assert(part.string.len <= c.text.len - c.text_len);
+        const n = part.string.len;
         @memcpy(c.text[c.text_len..][0..n], part.string[0..n]);
         c.text_len += n;
     }
@@ -145,14 +200,17 @@ const Seen = struct {
         c.events += 1;
         const p = payload orelse return;
         if (p.get("error")) |err| {
+            c.got_error = true;
             const code = err.get("code") orelse return;
             c.context_code = code == .string and std.mem.eql(u8, code.string, "context_length_exceeded");
             return;
         }
         if (p.get("choices")) |ch| if (ch == .array and ch.array.len > 0) if (ch.array[0].get("delta")) |d| {
             if (d.get("content")) |t| c.keep(t);
+            if (d.get("reasoning_content")) |t| c.keepReasoning(t);
             if (d.get("tool_calls")) |t| if (t == .array) for (t.array) |call| {
                 if (call.get("id") != null) c.calls += 1;
+                c.keepArguments(call);
             };
         };
         if (c.events != 1) return;
@@ -170,10 +228,13 @@ const Seen = struct {
         };
         if (payload.get("choices")) |ch| if (ch == .array and ch.array.len > 0) if (ch.array[0].get("message")) |m| {
             if (m.get("content")) |t| c.keep(t);
+            if (m.get("reasoning_content")) |t| c.keepReasoning(t);
             if (m.get("tool_calls")) |t| if (t == .array) {
                 c.calls += t.array.len;
+                for (t.array) |call| c.keepArguments(call);
             };
         };
+        c.got_error = payload.get("error") != null;
         const code = (payload.get("error") orelse return).get("code") orelse return;
         c.context_code = code == .string and std.mem.eql(u8, code.string, "context_length_exceeded");
     }
@@ -303,6 +364,116 @@ test "a streamed Responses tool reply sends no whitespace that the whole reply d
         "\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"parameters\":{\"type\":\"object\"}}]");
 }
 
+test "malformed and unoffered V41 DSML fails both whole and streamed chat" {
+    const inputs = [_][]const u8{
+        "<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n",
+        "<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n<｜DSML｜ parameter name=\"x\" string=\"false\">bad</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+        "<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"not_offered\">\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+    };
+    for (inputs) |raw| {
+        const tokens = try TestText.encode(undefined, std.testing.allocator, raw, false);
+        defer std.testing.allocator.free(tokens);
+        var backend: CallEngine = .{ .tokens = tokens };
+        const body = "{\"model\":\"test-model\",\"max_tokens\":1000,\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," ++
+            "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"parameters\":{\"type\":\"object\"}}}]";
+        const whole = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":false}", .{});
+        const streamed = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":true}", .{});
+        try std.testing.expectEqual(@as(?u16, 500), whole.status);
+        try std.testing.expect(whole.got_error and streamed.got_error);
+        try std.testing.expectEqual(@as(usize, 0), whole.calls);
+        try std.testing.expectEqual(@as(usize, 0), streamed.calls);
+    }
+}
+
+test "legacy calls inside V41 DSML parameters stay literal in whole and streamed replies" {
+    const literal = "<tool_call><function=lookup></function></tool_call>";
+    const raw = "<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n" ++
+        "<｜DSML｜ parameter name=\"q\" string=\"true\">" ++ literal ++ "</｜DSML｜ parameter>\n" ++
+        "</｜DSML｜ invoke>\n</｜DSML｜ calls>";
+    const tokens = try TestText.encode(undefined, std.testing.allocator, raw, false);
+    defer std.testing.allocator.free(tokens);
+    const body = "{\"model\":\"test-model\",\"max_tokens\":1000,\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," ++
+        "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"parameters\":{\"type\":\"object\"}}}]";
+    for ([_]bool{ false, true }) |batched| {
+        var backend: CallEngine = .{ .tokens = tokens, .batched = batched };
+        const whole = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":false}", .{});
+        const streamed = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":true}", .{});
+        try std.testing.expectEqual(@as(?u16, 200), whole.status);
+        try std.testing.expect(!whole.got_error and !streamed.got_error);
+        try std.testing.expectEqual(@as(usize, 1), whole.calls);
+        try std.testing.expectEqual(@as(usize, 1), streamed.calls);
+        try std.testing.expectEqualStrings("{\"q\":\"" ++ literal ++ "\"}", whole.arguments[0..whole.arguments_len]);
+        try std.testing.expectEqualStrings(whole.arguments[0..whole.arguments_len], streamed.arguments[0..streamed.arguments_len]);
+    }
+}
+
+test "complete V41 calls recovered from unclosed thinking agree in both reply modes" {
+    const raw = "<think>reason\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n</｜DSML｜ invoke>\n</｜DSML｜ calls>";
+    const tokens = try TestText.encode(undefined, std.testing.allocator, raw, false);
+    defer std.testing.allocator.free(tokens);
+    var backend: CallEngine = .{ .tokens = tokens };
+    const body = "{\"model\":\"test-model\",\"max_tokens\":1000,\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," ++
+        "\"chat_template_kwargs\":{\"enable_thinking\":true}," ++
+        "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"parameters\":{\"type\":\"object\"}}}]";
+    const whole = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":false}", .{});
+    const streamed = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":true}", .{});
+    try std.testing.expectEqual(@as(?u16, 200), whole.status);
+    try std.testing.expect(!whole.got_error and !streamed.got_error);
+    try std.testing.expectEqual(@as(usize, 1), whole.calls);
+    try std.testing.expectEqual(@as(usize, 1), streamed.calls);
+    try std.testing.expectEqualStrings("{}", whole.arguments[0..whole.arguments_len]);
+    try std.testing.expectEqualStrings("{}", streamed.arguments[0..streamed.arguments_len]);
+    try std.testing.expectEqualStrings("reason", whole.reasoning[0..whole.reasoning_len]);
+    try std.testing.expectEqualStrings("reason", @import("reply_text.zig").pyStrip(streamed.reasoning[0..streamed.reasoning_len]));
+    try std.testing.expectEqualStrings(whole.content(), streamed.content());
+}
+
+test "Anthropic V41 counting and generation preserve the same multipart prompt" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var text: TestText = .{ .v41 = true };
+    var backend: CallEngine = .{ .tokens = &.{ 'h', 'i' } };
+    var srv = try server.Server.init(std.testing.allocator, std.testing.io, backend.engine(), text.text(), .{
+        .served_name = "test-model",
+        .model_ids = &.{"test-model"},
+        .enable_thinking = false,
+        .use_drafts = false,
+    }, null);
+    defer srv.deinit();
+    var cx: errors.Cx = .{ .a = a };
+    const body = (try json.parse(a, "{\"model\":\"test-model\",\"max_tokens\":2,\"thinking\":{\"type\":\"disabled\"}," ++
+        "\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"one\"},{\"type\":\"text\",\"text\":\"two\"}]}]}")).ok;
+    const count_chat = try anthropic_translate.translate(&cx, body, true);
+    const count = try @import("anthropic.zig").countTokens(srv, &cx, count_chat);
+    var seen: Seen = .{};
+    var conn: Conn = .{ .fd = -1, .peer = "", .buf = &.{}, .gpa = a };
+    openai.run(srv, a, seen.out(), .{ .conn = &conn }, true, try anthropic_translate.translate(&cx, body, false));
+    try std.testing.expectEqual(@as(?u16, 200), seen.status);
+    try std.testing.expectEqual(count, backend.prompt_len);
+    const expected = "<｜begin▁of▁sentence｜><｜User｜>one\n\ntwo<｜Assistant｜></think>";
+    try std.testing.expectEqualStrings(expected, try TestText.decode(undefined, a, backend.prompt[0..backend.prompt_len]));
+}
+
+test "valid V41 DSML has the same call and prose in whole and streamed chat" {
+    const raw = "summary\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n" ++
+        "<｜DSML｜ parameter name=\"image\" string=\"true\">cat.jpg</｜DSML｜ parameter>\n" ++
+        "</｜DSML｜ invoke>\n</｜DSML｜ calls>";
+    const tokens = try TestText.encode(undefined, std.testing.allocator, raw, false);
+    defer std.testing.allocator.free(tokens);
+    var backend: CallEngine = .{ .tokens = tokens };
+    const body = "{\"model\":\"test-model\",\"max_tokens\":1000,\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," ++
+        "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"parameters\":{\"type\":\"object\"}}}]";
+    const whole = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":false}", .{});
+    const streamed = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":true}", .{});
+    try std.testing.expectEqual(@as(?u16, 200), whole.status);
+    try std.testing.expect(!whole.got_error and !streamed.got_error);
+    try std.testing.expectEqual(@as(usize, 1), whole.calls);
+    try std.testing.expectEqual(@as(usize, 1), streamed.calls);
+    try std.testing.expectEqualStrings("summary", whole.content());
+    try std.testing.expectEqualStrings(whole.content(), streamed.content());
+}
+
 /// HiEngine's replies from an engine that decodes greedily only.
 const GreedyEngine = struct {
     fn engine(e: *@This()) api.Engine {
@@ -310,9 +481,22 @@ const GreedyEngine = struct {
     }
 
     fn info(_: *anyopaque) api.Info {
-        return .{ .context_window = 4096, .greedy_only = true };
+        return .{ .context_window = 4096, .greedy_only = true, .thinking_budget = false };
     }
 };
+
+test "unsupported thinking budgets are refused before opening a chat stream" {
+    var backend: GreedyEngine = .{};
+    const body = "{\"model\":\"test-model\",\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," ++
+        "\"max_tokens\":2,\"temperature\":0,\"thinking_budget\":5,\"chat_template_kwargs\":{\"enable_thinking\":true}";
+    const whole = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":false}", .{});
+    const streamed = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":true}", .{});
+    try std.testing.expectEqual(@as(?u16, 400), whole.status);
+    try std.testing.expectEqual(@as(?u16, 400), streamed.status);
+    try std.testing.expect(!streamed.opened);
+    try std.testing.expectEqual(@as(i64, 0), streamed.preparing);
+    try @import("admission_consumer_regressions.zig").budgetWithoutThinking(backend.engine(), sendWith);
+}
 
 test "a greedy-only engine's sampled request is a 400 before the stream opens; greedy ones are served" {
     var backend: GreedyEngine = .{};
@@ -341,5 +525,75 @@ test "a greedy-only engine's refusal names --temperature 0 when the server's own
         try std.testing.expectError(error.Refused, srv.resolveSampling(&cx, (try json.parse(a, "{\"temperature\":0.7}")).ok, 0, &.{}));
         try std.testing.expectEqual(case[1], std.mem.indexOf(u8, cx.message, "--temperature 0") != null);
         try std.testing.expect(try srv.resolveSampling(&cx, (try json.parse(a, "{\"temperature\":0}")).ok, 0, &.{}) == null);
+    }
+}
+
+test "nested legacy markup in malformed V41 DSML is never executable" {
+    const prefix = "<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n" ++
+        "<｜DSML｜ parameter name=\"q\" string=\"true\"><tool_call><function=lookup></function></tool_call>";
+    const inputs = [_][]const u8{
+        prefix,
+        prefix ++ "</｜DSML｜ parameter>\n</｜DSML｜ calls>",
+        "<think>reason\n" ++ prefix ++ "</｜DSML｜ parameter>\n</｜DSML｜ calls>",
+        "<think>reason\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"not_offered\">\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
+    };
+    for (inputs, 0..) |raw, i| {
+        const tokens = try TestText.encode(undefined, std.testing.allocator, raw, false);
+        defer std.testing.allocator.free(tokens);
+        var backend: CallEngine = .{ .tokens = tokens };
+        const body = try std.fmt.allocPrint(std.testing.allocator, "{{\"model\":\"test-model\",\"max_tokens\":1000,\"messages\":[{{\"role\":\"user\",\"content\":\"x\"}}]," ++
+            "\"chat_template_kwargs\":{{\"enable_thinking\":{s}}}," ++
+            "\"tools\":[{{\"type\":\"function\",\"function\":{{\"name\":\"lookup\",\"parameters\":{{\"type\":\"object\"}}}}}}]", .{if (i >= 2) "true" else "false"});
+        defer std.testing.allocator.free(body);
+        const whole_body = try std.mem.concat(std.testing.allocator, u8, &.{ body, ",\"stream\":false}" });
+        defer std.testing.allocator.free(whole_body);
+        const streamed_body = try std.mem.concat(std.testing.allocator, u8, &.{ body, ",\"stream\":true}" });
+        defer std.testing.allocator.free(streamed_body);
+        const whole = try sendWith(backend.engine(), .chat, whole_body, .{});
+        const streamed = try sendWith(backend.engine(), .chat, streamed_body, .{});
+        try std.testing.expectEqual(@as(?u16, 500), whole.status);
+        try std.testing.expect(whole.got_error and streamed.got_error);
+        try std.testing.expectEqual(@as(usize, 0), whole.calls);
+        try std.testing.expectEqual(@as(usize, 0), streamed.calls);
+    }
+}
+
+test "legacy XML recovered from unclosed thinking retains its whole-arguments fallback" {
+    const raw = "reason\n<tool_call>\n<function=lookup>\n<parameter=query>\nfast cars\n</parameter>\n" ++
+        "<parameter=limit>\n5\n</parameter>\n</function>\n</tool_call>";
+    const tokens = try TestText.encode(undefined, std.testing.allocator, raw, false);
+    defer std.testing.allocator.free(tokens);
+    var backend: CallEngine = .{ .tokens = tokens };
+    const body = "{\"model\":\"test-model\",\"max_tokens\":1000,\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," ++
+        "\"chat_template_kwargs\":{\"enable_thinking\":true}," ++
+        "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"parameters\":{\"type\":\"object\"," ++
+        "\"properties\":{\"limit\":{\"type\":\"integer\"}}}}}]";
+    const whole = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":false}", .{});
+    const streamed = try sendWith(backend.engine(), .chat, body ++ ",\"stream\":true}", .{});
+    try std.testing.expectEqual(@as(?u16, 200), whole.status);
+    try std.testing.expect(!whole.got_error and !streamed.got_error);
+    try std.testing.expectEqual(@as(usize, 1), whole.calls);
+    try std.testing.expectEqual(@as(usize, 1), streamed.calls);
+    try std.testing.expectEqualStrings("{\"query\":\"fast cars\",\"limit\":5}", whole.arguments[0..whole.arguments_len]);
+    try std.testing.expectEqualStrings(whole.arguments[0..whole.arguments_len], streamed.arguments[0..streamed.arguments_len]);
+    try std.testing.expectEqual(@as(usize, 1), streamed.argument_fragments);
+}
+test "containment final-review legacy consumer regressions remain supported" {
+    try @import("legacy_consumer_regressions.zig").run(TestText, CallEngine, sendWith);
+    try @import("legacy_consumer_regressions.zig").mixedChain(TestText, CallEngine, sendWith);
+    try @import("decoder_consumer_regressions.zig").run(TestText, HiEngine);
+}
+test "vision input and audio output are refused before opening a stream" {
+    try @import("admission_consumer_regressions.zig").media(send);
+}
+test "explicit drafts are refused rather than ignored when server drafts are disabled" {
+    const body = "{\"model\":\"test-model\",\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," ++
+        "\"max_tokens\":2,\"draft\":true";
+    for ([_][]const u8{ ",\"stream\":false}", ",\"stream\":true}" }) |suffix| {
+        const raw = try std.mem.concat(std.testing.allocator, u8, &.{ body, suffix });
+        defer std.testing.allocator.free(raw);
+        const seen = try send(.chat, raw);
+        try std.testing.expectEqual(@as(?u16, 400), seen.status);
+        try std.testing.expect(!seen.opened);
     }
 }

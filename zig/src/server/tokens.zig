@@ -76,7 +76,10 @@ fn detokenize(srv: *Server, cx: *Cx, body: Value) errors.Refused!Value {
         if (n < 0 or n >= vocab) return cx.fail(.request, "tokens token ids must be in the vocabulary's range 0 to {d}", .{@as(i64, vocab) - 1});
         slot.* = @intCast(n);
     }
-    const text = srv.text.decode(cx.a, out) catch return error.OutOfMemory;
+    const text = srv.text.decode(cx.a, out) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Template => return cx.other("the tokenizer could not decode the requested tokens"),
+    };
     const o = try json.newObject(cx.a);
     try o.put(cx.a, "prompt", .{ .string = text });
     return .{ .object = o };

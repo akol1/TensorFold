@@ -95,7 +95,7 @@ const Box = struct {
         return error.HostTimeout;
     }
 };
-fn stop(_: *anyopaque, tokens: []const u32) bool {
+fn stop(_: *anyopaque, tokens: []const u32) api.Stop.Error!bool {
     return tokens.len == 4;
 }
 test "draft batch routing, bounded delivery and EOS preserve shared host events" {
@@ -127,6 +127,33 @@ test "draft batch routing, bounded delivery and EOS preserve shared host events"
             try std.testing.expectEqual(@as(u32, 2), b.stats.min_rows);
         }
         try std.testing.expectEqual(if (count == 4) api.Reason.stop else api.Reason.length, b.reason.?);
+    }
+}
+
+test "stop callback failure finishes the serial request with its actual error" {
+    const Check = struct {
+        fn fail(ptr: *anyopaque, _: []const u32) api.Stop.Error!bool {
+            const failure: *api.Stop.Error = @ptrCast(@alignCast(ptr));
+            return failure.*;
+        }
+    };
+    for ([_]api.Stop.Error{ error.OutOfMemory, error.Template }) |failure| {
+        var stored = failure;
+        var f = Fixture{};
+        var b = Box{};
+        const h = try serial.Host.init(std.testing.allocator, io, f.driver());
+        defer h.deinit();
+        const request = api.Request{
+            .prompt = &.{1},
+            .max_tokens = 20,
+            .stop = .{ .ctx = &stored, .check = Check.fail },
+        };
+        try h.engine().submit(7, &request, .{ .ctx = &b, .event = Box.event });
+        try b.wait();
+        try std.testing.expectEqual(api.Reason.failed, b.reason.?);
+        try std.testing.expectEqualStrings(@errorName(failure), b.message);
+        try std.testing.expectEqual(@as(usize, 1), b.count);
+        try std.testing.expectEqual(@as(usize, 0), f.batches);
     }
 }
 

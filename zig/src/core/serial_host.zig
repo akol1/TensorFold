@@ -26,6 +26,8 @@ pub const Driver = struct {
     fed: ?*const fn (*anyopaque) u64 = null,
     /// The family's queue as the server's idle keepalive target (Metal); null keeps the ticker off.
     keepalive: ?api.keepalive.Target = null,
+    /// Immutable or synchronized backend memory counters; HTTP reads must not touch the GPU.
+    memory: ?api.MemorySource = null,
 };
 const Job = struct { id: api.Id, request: *const api.Request, sink: api.Sink };
 
@@ -81,6 +83,7 @@ pub const Host = struct {
         const h = self(ptr);
         var i = h.driver.info;
         i.plain_only = h.driver.draft_batch == null;
+        i.thinking_budget = false;
         return i;
     }
     fn submit(ptr: *anyopaque, id: api.Id, request: *const api.Request, sink: api.Sink) api.SubmitError!void {
@@ -128,8 +131,9 @@ pub const Host = struct {
         if (live and stream_tokens.len > 0) stream_tokens[0] = h.prompt_count + h.generated_count;
         out.* = .{ .running = @intFromBool(live), .waiting = @intCast(h.queued.items.len), .streams = if (live and stream_tokens.len > 0) 1 else 0, .generation_tokens = h.generated_count, .prefill_tokens_per_second = h.prefill_rate, .decode_tokens_per_second = h.decode_rate };
     }
-    fn memory(_: *anyopaque, _: bool) ?api.Memory {
-        return null;
+    fn memory(ptr: *anyopaque, reset_peak: bool) ?api.Memory {
+        const source = self(ptr).driver.memory orelse return null;
+        return source.read(source.ctx, reset_peak);
     }
     fn emit(job: *Job, event: api.Event) void {
         job.sink.event(job.sink.ctx, job.id, &event);
@@ -252,7 +256,8 @@ pub const Host = struct {
             h.lock();
             h.generated_count += 1;
             h.unlock();
-            const stop = std.mem.indexOfScalar(u32, request.eos, token) != null or (if (request.stop) |check| check.check(check.ctx, emitted.items) else false);
+            const stop = std.mem.indexOfScalar(u32, request.eos, token) != null or
+                (if (request.stop) |check| try check.check(check.ctx, emitted.items) else false);
             if (stop or i + 1 == request.max_tokens) {
                 const ns = draw_start.durationTo(std.Io.Clock.awake.now(h.io)).toNanoseconds();
                 h.lock();

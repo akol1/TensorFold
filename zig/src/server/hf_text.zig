@@ -4,6 +4,7 @@ const tokenizer = @import("tokenizer");
 const template = @import("template");
 const json = @import("json.zig");
 const model_text = @import("model_text.zig");
+const deepseek_v41 = @import("deepseek_v41_text.zig");
 const Value = json.Value;
 const Allocator = std.mem.Allocator;
 
@@ -13,8 +14,11 @@ pub const HfText = struct {
     tok: tokenizer.Tokenizer,
     source: []const u8 = "",
     tool_source: []const u8 = "",
+    // Loaded once; HTTP readers never allocate into the checkpoint's arena.
+    combined_source: []const u8 = "",
     compiled: ?template.Compiled = null,
     tool_compiled: ?template.Compiled = null,
+    v41: bool = false,
     specials: std.json.Value = .null,
     eos: []const u32 = &.{},
     prefix: []const u32 = &.{}, // the post-processor's tokens before a text (add_special_tokens)
@@ -28,18 +32,25 @@ pub const HfText = struct {
         errdefer t.arena.deinit();
         const a = t.arena.allocator();
         t.tok = tokenizer.loadTokenizer(io, gpa, dir) catch |e| {
+            if (e == error.OutOfMemory) return error.OutOfMemory;
             problem.* = try std.fmt.allocPrint(pa, "cannot read {s}/tokenizer.json ({s})", .{ dir, @errorName(e) });
             return error.Load;
         };
         errdefer t.tok.deinit();
-        const config = readJson(io, a, dir, "tokenizer_config.json");
-        const model_config = readJson(io, a, dir, "config.json");
+        const config = try readJson(io, a, dir, "tokenizer_config.json");
+        const model_config = try readJson(io, a, dir, "config.json");
         if (template_override) |path| {
             t.source = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(16 << 20)) catch |e| {
+                if (e == error.OutOfMemory) return error.OutOfMemory;
                 problem.* = try std.fmt.allocPrint(pa, "cannot read chat template override ({s})", .{@errorName(e)});
                 return error.Load;
             };
         } else try t.readTemplates(io, a, dir, config);
+        t.v41 = deepseek_v41.isTemplate(t.source) or
+            (template_override == null and model_config == .object and if (model_config.object.get("model_type")) |kind|
+                kind == .string and std.mem.eql(u8, kind.string, "deepseek_v41")
+            else
+                false);
         t.specials = try specialsOf(a, config);
         t.eos = try t.eosIds(a, model_config, config);
         try t.readPostProcessor(io, a, dir);
@@ -47,11 +58,26 @@ pub const HfText = struct {
             var diag: template.Diag = .{};
             defer if (diag.msg.len > 0) gpa.free(diag.msg);
             t.compiled = template.compile(gpa, t.source, &diag) catch |e| {
+                if (e == error.OutOfMemory) return error.OutOfMemory;
                 problem.* = try std.fmt.allocPrint(pa, "the chat template does not compile: {s} ({s})", .{ diag.msg, @errorName(e) });
                 return error.Load;
             };
         }
-        if (t.tool_source.len > 0) t.tool_compiled = template.compile(gpa, t.tool_source, null) catch null;
+        errdefer if (t.compiled) |*c| c.deinit();
+        if (t.tool_source.len > 0) {
+            var diag: template.Diag = .{};
+            defer if (diag.msg.len > 0) gpa.free(diag.msg);
+            t.tool_compiled = template.compile(gpa, t.tool_source, &diag) catch |e| {
+                if (e == error.OutOfMemory) return error.OutOfMemory;
+                problem.* = try std.fmt.allocPrint(pa, "the tool chat template does not compile: {s} ({s})", .{ diag.msg, @errorName(e) });
+                return error.Load;
+            };
+        }
+        errdefer if (t.tool_compiled) |*c| c.deinit();
+        t.combined_source = if (t.tool_source.len > 0)
+            try std.mem.concat(a, u8, &.{ t.source, " ", t.tool_source })
+        else
+            t.source;
         return t;
     }
 
@@ -63,10 +89,12 @@ pub const HfText = struct {
         t.gpa.destroy(t);
     }
 
-    fn readJson(io: std.Io, a: Allocator, dir: []const u8, name: []const u8) std.json.Value {
-        const path = std.fs.path.join(a, &.{ dir, name }) catch return .null;
-        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(64 << 20)) catch return .null;
-        return std.json.parseFromSliceLeaky(std.json.Value, a, bytes, .{}) catch .null;
+    fn readJson(io: std.Io, a: Allocator, dir: []const u8, name: []const u8) Allocator.Error!std.json.Value {
+        const path = try std.fs.path.join(a, &.{ dir, name });
+        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(64 << 20)) catch |err|
+            return if (err == error.OutOfMemory) error.OutOfMemory else .null;
+        return std.json.parseFromSliceLeaky(std.json.Value, a, bytes, .{}) catch |err|
+            if (err == error.OutOfMemory) error.OutOfMemory else .null;
     }
 
     /// chat_template.jinja, else chat_template.json, else tokenizer_config.json's (named: "default", and "tool_use").
@@ -75,8 +103,10 @@ pub const HfText = struct {
         if (std.Io.Dir.cwd().readFileAlloc(io, jinja, a, .limited(16 << 20))) |s| {
             t.source = s;
             return;
-        } else |_| {}
-        const sidecar = readJson(io, a, dir, "chat_template.json");
+        } else |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+        }
+        const sidecar = try readJson(io, a, dir, "chat_template.json");
         if (sidecar == .object) if (sidecar.object.get("chat_template")) |s| if (s == .string) {
             t.source = s.string;
             return;
@@ -150,7 +180,7 @@ pub const HfText = struct {
 
     /// The tokens ``add_special_tokens`` adds: TemplateProcessing's single template, or Bert and Roberta's cls and sep.
     fn readPostProcessor(t: *HfText, io: std.Io, a: Allocator, dir: []const u8) !void {
-        const doc = readJson(io, a, dir, "tokenizer.json");
+        const doc = try readJson(io, a, dir, "tokenizer.json");
         if (doc != .object) return;
         const pp = doc.object.get("post_processor") orelse return;
         var prefix: std.ArrayList(u32) = .empty;
@@ -226,11 +256,13 @@ pub const HfText = struct {
         const t = self(ctx);
         const ids = t.tok.encode(a, s) catch |e| return if (e == error.OutOfMemory) error.OutOfMemory else error.Template;
         if (!add_special or (t.prefix.len == 0 and t.suffix.len == 0)) return ids;
+        defer a.free(ids);
         return std.mem.concat(a, u32, &.{ t.prefix, ids, t.suffix });
     }
 
-    fn decodeFn(ctx: *anyopaque, a: Allocator, ids: []const u32) Allocator.Error![]u8 {
-        return self(ctx).tok.decode(a, ids, false) catch |e| if (e == error.OutOfMemory) error.OutOfMemory else a.dupe(u8, "\u{fffd}");
+    fn decodeFn(ctx: *anyopaque, a: Allocator, ids: []const u32) model_text.Error![]u8 {
+        return self(ctx).tok.decode(a, ids, false) catch |e|
+            return if (e == error.OutOfMemory) error.OutOfMemory else error.Template;
     }
 
     fn tokenIdFn(ctx: *anyopaque, piece: []const u8) ?u32 {
@@ -242,8 +274,9 @@ pub const HfText = struct {
         return a.dupe(u8, piece);
     }
 
-    fn tokenBytesFn(ctx: *anyopaque, a: Allocator, id: u32) Allocator.Error!?[]u8 {
-        return self(ctx).tok.tokenBytes(a, id) catch |e| if (e == error.OutOfMemory) error.OutOfMemory else null;
+    fn tokenBytesFn(ctx: *anyopaque, a: Allocator, id: u32) model_text.Error!?[]u8 {
+        return self(ctx).tok.tokenBytes(a, id) catch |e|
+            return if (e == error.OutOfMemory) error.OutOfMemory else error.Template;
     }
 
     fn vocabFn(ctx: *anyopaque) u32 {
@@ -255,27 +288,39 @@ pub const HfText = struct {
     }
 
     fn sourceFn(ctx: *anyopaque) []const u8 {
-        const t = self(ctx);
-        return if (t.tool_source.len > 0) std.mem.concat(t.arena.allocator(), u8, &.{ t.source, " ", t.tool_source }) catch t.source else t.source;
+        return self(ctx).combined_source;
     }
 
     fn renderFn(ctx: *anyopaque, a: Allocator, messages: Value, options: model_text.RenderOptions, problem: *[]const u8) model_text.Error![]u8 {
         const t = self(ctx);
-        const compiled = if (options.tools != null and t.tool_compiled != null) &t.tool_compiled.? else if (t.compiled) |*c| c else {
+        const use_tools = options.tools != null and t.tool_compiled != null;
+        const compiled = if (use_tools) &t.tool_compiled.? else if (t.compiled) |*c| c else {
             problem.* = "this checkpoint has no chat template: send a completion prompt instead";
             return error.Template;
         };
+        var scratch = std.heap.ArenaAllocator.init(a);
+        defer scratch.deinit();
+        const work = scratch.allocator();
+        const source = if (use_tools) t.tool_source else t.source;
+        const v41 = t.v41 or deepseek_v41.isTemplate(source);
         var context: std.json.ObjectMap = .empty;
         if (t.specials == .object) {
             var it = t.specials.object.iterator();
-            while (it.next()) |e| try context.put(a, e.key_ptr.*, e.value_ptr.*);
+            while (it.next()) |e| try context.put(work, e.key_ptr.*, e.value_ptr.*);
         }
-        try context.put(a, "enable_thinking", .{ .bool = options.enable_thinking });
-        try context.put(a, "thinking_mode", .{ .string = if (options.enable_thinking) "thinking" else "chat" });
-        if (options.reasoning_effort) |e| try context.put(a, "reasoning_effort", .{ .string = e });
+        try context.put(work, "enable_thinking", .{ .bool = options.enable_thinking });
+        try context.put(work, "thinking_mode", .{ .string = if (options.enable_thinking) "thinking" else "chat" });
+        if (options.reasoning_effort) |e| {
+            const effort_value: std.json.Value = if (v41) deepseek_v41.effort(work, source, e) catch |err| {
+                problem.* = "DeepSeek V4.1 reasoning effort must be within 1..100 or name a supported effort";
+                return err;
+            } else .{ .string = e };
+            try context.put(work, "reasoning_effort", effort_value);
+        }
         var diag: template.Diag = .{};
-        const tools: std.json.Value = if (options.tools) |tl| try toStd(a, tl) else .null;
-        const out = template.render(a, compiled, try toStd(a, messages), tools, .{ .object = context }, options.add_generation_prompt, &diag) catch |e| {
+        const tools: std.json.Value = if (options.tools) |tl| try toStd(work, tl) else .null;
+        const prepared = if (v41) try deepseek_v41.prepare(work, messages, problem) else messages;
+        const out = template.render(a, compiled, try toStd(work, prepared), tools, .{ .object = context }, options.add_generation_prompt, &diag) catch |e| {
             if (e == error.OutOfMemory) return error.OutOfMemory;
             problem.* = diag.msg;
             return error.Template;
@@ -344,6 +389,12 @@ test "explicit template overrides checkpoint templates including tool prompts an
     const messages = (try json.parse(a, "[{\"role\":\"user\",\"content\":\"H\"}]")).ok;
     const named = try HfText.load(gpa, io, dir, null, a, &problem);
     defer named.deinit();
+    const source = named.text().templateSource();
+    try std.testing.expectEqualStrings("default{{ messages[0].content }} tools{{ messages[0].content }}", source);
+    try std.testing.expectEqual(@intFromPtr(source.ptr), @intFromPtr(named.text().templateSource().ptr));
+    const owned = try named.text().render(gpa, messages, .{}, &problem);
+    defer gpa.free(owned);
+    try std.testing.expectEqualStrings("defaultH", owned);
     try std.testing.expectEqualStrings("defaultH", try named.text().render(a, messages, .{}, &problem));
     try std.testing.expectEqualStrings("toolsH", try named.text().render(a, messages, .{ .tools = .{ .array = &.{} } }, &problem));
     try tmp.dir.writeFile(io, .{ .sub_path = "override.jinja", .data = "override{{ messages[0].content }}" });
@@ -366,4 +417,44 @@ test "explicit template overrides checkpoint templates including tool prompts an
     const empty = try HfText.load(gpa, io, dir, path, a, &problem);
     defer empty.deinit();
     try std.testing.expectError(error.Template, empty.text().render(a, messages, .{}, &problem));
+    try tmp.dir.deleteFile(io, "chat_template.jinja");
+    try tmp.dir.writeFile(io, .{ .sub_path = "tokenizer_config.json", .data =
+        \\{"chat_template":{"default":"ok","tool_use":"{% unknown %}"}}
+    });
+    try std.testing.expectError(error.Load, HfText.load(gpa, io, dir, null, a, &problem));
+}
+
+test "postprocessor encoding frees the unwrapped token allocation" {
+    const a = std.testing.allocator;
+    var t: HfText = .{
+        .gpa = a,
+        .arena = .init(a),
+        .tok = try tokenizer.parse(a,
+            \\{"model":{"type":"BPE","vocab":{"H":0},"merges":[]},"added_tokens":[]}
+        ),
+        .prefix = &.{1},
+        .suffix = &.{2},
+    };
+    defer t.tok.deinit();
+    defer t.arena.deinit();
+    const ids = try t.text().encode(a, "H", true);
+    defer a.free(ids);
+    try std.testing.expectEqualSlices(u32, &.{ 1, 0, 2 }, ids);
+}
+
+test "decoder and token bytes preserve allocation failures" {
+    const a = std.testing.allocator;
+    var t: HfText = .{
+        .gpa = a,
+        .arena = .init(a),
+        .tok = try tokenizer.parse(a,
+            \\{"model":{"type":"BPE","vocab":{"H":0},"merges":[]},"added_tokens":[],"decoder":{"type":"ByteLevel"}}
+        ),
+    };
+    defer t.tok.deinit();
+    defer t.arena.deinit();
+    var decode_fail = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
+    try std.testing.expectError(error.OutOfMemory, t.text().decode(decode_fail.allocator(), &.{0}));
+    var bytes_fail = std.testing.FailingAllocator.init(a, .{ .fail_index = 0 });
+    try std.testing.expectError(error.OutOfMemory, t.text().tokenBytes(bytes_fail.allocator(), 0));
 }

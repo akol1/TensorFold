@@ -90,6 +90,7 @@ pub const ScriptEngine = struct {
         const prefill_done = std.Io.Clock.awake.now(e.io).toNanoseconds();
         var stats: api.Stats = .{ .prefill_seconds = @as(f64, @floatFromInt(@max(0, prefill_done - prefill_start))) / 1e9 };
         var reason: api.Reason = .stop;
+        var message: []const u8 = "";
         var done = false;
         for (script.object.get("chunks").?.array.items) |chunk| {
             if (delay > 0) std.Io.sleep(e.io, .fromMilliseconds(delay), .awake) catch {};
@@ -109,7 +110,14 @@ pub const ScriptEngine = struct {
             const start = emitted.items.len;
             for (tokens.items) |t| {
                 emitted.append(a, t) catch {};
-                if (std.mem.indexOfScalar(u32, r.eos, t) != null or (r.stop != null and r.stop.?.check(r.stop.?.ctx, emitted.items))) {
+                const stopped = std.mem.indexOfScalar(u32, r.eos, t) != null or
+                    (if (r.stop) |stop| stop.check(stop.ctx, emitted.items) catch |err| {
+                        reason = .failed;
+                        message = @errorName(err);
+                        done = true;
+                        break;
+                    } else false);
+                if (stopped) {
                     reason = .stop;
                     done = true;
                 } else if (emitted.items.len >= r.max_tokens) {
@@ -132,6 +140,6 @@ pub const ScriptEngine = struct {
         e.active -= 1;
         _ = e.cancelled.remove(id);
         e.mutex.unlock(e.io);
-        sink.event(sink.ctx, id, &.{ .finished = .{ .reason = reason, .stats = stats } });
+        sink.event(sink.ctx, id, &.{ .finished = .{ .reason = reason, .stats = stats, .message = message } });
     }
 };

@@ -30,8 +30,12 @@ fn nameText(a: Allocator, v: ?Value) Allocator.Error![]const u8 {
 
 pub fn toolName(a: Allocator, tool: Value) Allocator.Error![]const u8 {
     if (tool != .object) return "";
-    if (tool.get("function")) |function| if (function == .object) return nameText(a, function.get("name"));
-    return nameText(a, tool.get("name"));
+    const function = if (tool.get("function")) |f| (if (f == .object) f else tool) else tool;
+    const name = try nameText(a, function.get("name"));
+    var namespace = tool.field("namespace") orelse function.field("namespace") orelse Value.null;
+    if (namespace == .object) namespace = namespace.get("name") orelse Value.null;
+    if (namespace != .string or std.mem.indexOf(u8, name, "::") != null) return name;
+    return std.mem.concat(a, u8, &.{ namespace.string, "::", name });
 }
 
 fn lowerEq(text: []const u8, want: []const u8) bool {
@@ -88,7 +92,7 @@ pub fn active(cx: *Cx, tools: ?Value, choice: ?Value) errors.Refused![]Value {
     if (!try isFunctionChoice(cx.a, c)) return specs;
     const function = c.get("function") orelse return cx.other("tool_choice function must include a function object");
     if (function != .object) return cx.other("tool_choice function must include a function object");
-    const requested = try nameText(cx.a, function.get("name"));
+    const requested = try toolName(cx.a, c);
     if (requested.len == 0) return cx.other("tool_choice function must include a name");
     var named: std.ArrayList(Value) = .empty;
     for (specs) |tool| if (std.mem.eql(u8, try toolName(cx.a, tool), requested)) try named.append(cx.a, tool);

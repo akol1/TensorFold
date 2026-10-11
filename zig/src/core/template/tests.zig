@@ -119,3 +119,14 @@ test "syntax and unknown filters fail at compile time" {
     try expect("{% if %}", shared, .{ .text = null, .raised = null });
     try expect("{% for x in y %}", shared, .{ .text = null, .raised = null });
 }
+
+test "dynamic keyword mapping expands into dict constructors and macros" {
+    try expect("{{ dict({'a': 1}, **{'b': 2}) | tojson }}", "{}", .{ .text = "{\"a\": 1, \"b\": 2}", .raised = null });
+    try expect("{% macro m(a, b) %}{{ a }}:{{ b }}{% endmacro %}{{ m(1, **{'b': 2}) }}", "{}", .{ .text = "1:2", .raised = null });
+    try expect("{{ dict(x=1, **{'x': 2}) }}", "{}", .{ .text = null, .raised = null });
+    try expect("{{ dict(**[1, 2]) }}", "{}", .{ .text = null, .raised = null });
+    try expect("{{ dict(x=1, x=2) }}", "{}", .{ .text = null, .raised = null });
+    try expect("{{ dict(**{'x': 1}, y=2) }}", "{}", .{ .text = null, .raised = null });
+    try expect("{{ dict(**{'x': 1},) | tojson }}", "{}", .{ .text = "{\"x\": 1}", .raised = null });
+    try expect("{{ dict(**{'x': value | nofilter}) }}", "{}", .{ .text = null, .raised = null });
+}

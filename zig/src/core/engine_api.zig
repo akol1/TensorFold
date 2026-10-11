@@ -15,10 +15,12 @@ pub const seedFor = lanes.sampling.seedFor;
 /// A committed token's log probability under the target's raw distribution, with the best tokens at its position.
 pub const LogprobRow = lanes.LogprobRow;
 
-/// The request's stop strings, checked on the engine's thread after each committed token (the server decodes the tail).
+/// Stop checks run after each committed token; decode/allocation failures fail the request.
 pub const Stop = struct {
     ctx: *anyopaque,
-    check: *const fn (ctx: *anyopaque, emitted: []const u32) bool,
+    check: *const fn (ctx: *anyopaque, emitted: []const u32) Error!bool,
+
+    pub const Error = lanes.stream.StopCheck.Error;
 };
 
 /// tool_choice "required" or a named function: outside a think block the answer opens a call to an offered tool.
@@ -131,6 +133,8 @@ pub const Info = struct {
     call_gates: bool = false,
     /// The engine observes loop_guard requests in its lane stream.
     loop_guard: bool = false,
+    /// The engine enforces a token budget while the think block is open.
+    thinking_budget: bool = true,
     structures: bool = false,
     /// Requests may ask for ``logprobs`` (the engine's lanes give the target's rows).
     logprobs: bool = false,
@@ -178,6 +182,8 @@ pub const Family = struct { model_type: []const u8, formats: []const []const u8 
 pub const Open = struct {
     dir: []const u8,
     model_type: []const u8,
+    /// Original Engram table shards, fully resident; null uses the checkpoint's explicit configuration.
+    engram_table_dir: ?[]const u8 = null,
     context: ?i64 = null,
     lanes: u32 = 8,
     /// --parallel named a number: an engine whose memory fits fewer streams refuses instead of serving fewer.

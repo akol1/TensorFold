@@ -1,0 +1,72 @@
+{
+  "reference": "DeepSeek-AI encoding.py",
+  "revision": "2cba9e42aa026125f3ed06c6d98c1db82f7ca027",
+  "cases": [
+    {
+      "name": "namespaces_and_parameter_boundaries",
+      "thinking": true,
+      "completion": "  reason  </think>summary\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"search::lookup\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">  value\n\"quoted\"  </｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"limit\" string=\"false\">2</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"data\" string=\"false\">[true, null, {\"x\": 1}]</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"files::lookup\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜>",
+      "parsed": {
+        "role": "assistant",
+        "content": "summary",
+        "reasoning_content": "  reason  ",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "arguments": "{\"query\": \"  value\\n\\\"quoted\\\"  \", \"limit\": 2, \"data\": [true, null, {\"x\": 1}]}"
+            },
+            "namespace": "search"
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "arguments": "{}"
+            },
+            "namespace": "files"
+          }
+        ]
+      }
+    },
+    {
+      "name": "chat_empty_call",
+      "thinking": false,
+      "completion": "summary\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜>",
+      "parsed": {
+        "role": "assistant",
+        "content": "summary",
+        "reasoning_content": "",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "arguments": "{}"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "escaped_keys_and_unicode",
+      "thinking": false,
+      "completion": "summary\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n<｜DSML｜ parameter name=\"key\"quoted\" string=\"true\">中文</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"false\" string=\"false\">false</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"null\" string=\"false\">null</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"object\" string=\"false\">{\"b\": [1, 2]}</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜>",
+      "parsed": {
+        "role": "assistant",
+        "content": "summary",
+        "reasoning_content": "",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "arguments": "{\"key\\\"quoted\": \"中文\", \"false\": false, \"null\": null, \"object\": {\"b\": [1, 2]}}"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

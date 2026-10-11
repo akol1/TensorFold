@@ -119,16 +119,24 @@ const Plan = struct {
 fn plan(srv: *Server, cx: *Cx, is_chat: bool, raw: Value) errors.Refused!Plan {
     const body = try fields.parseNumbers(cx, raw);
     try fields.validateModalities(cx, body);
+    if (body.get("draft")) |draft| {
+        if (draft == .bool and draft.bool and (srv.info.plain_only or !srv.config.use_drafts))
+            return cx.refuse("draft decoding is not available for this served model");
+    }
     // rows need each token's exact bytes: a tokenizer whose decoding depends on context (null) can't give them
-    const exact_bytes = json.truthyField(body, "logprobs") and srv.info.logprobs and (srv.text.tokenBytes(cx.a, 0) catch return error.OutOfMemory) != null;
+    const exact_bytes = json.truthyField(body, "logprobs") and srv.info.logprobs and
+        (srv.text.tokenBytes(cx.a, 0) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Template => return cx.fail(.server, "the tokenizer could not decode token bytes", .{}),
+        }) != null;
     const logprobs = try fields.probabilityOptions(cx, body, exact_bytes);
     if (srv.config.request_log) |path| request_log.append(cx.a, path, body);
     var input: chat.Input = .{ .fields = undefined };
     if (is_chat) {
-        input.messages = try messages.normalize(cx, body.get("messages"), "system", srv.needs_user_after_tool);
+        input.messages = try validatedMessages(srv, cx, body.get("messages"));
         input.tools = try tool_specs.active(cx, body.get("tools"), body.get("tool_choice"));
     } else if (body.get("messages")) |m| if (m == .array and m.array.len > 0) {
-        input.messages = try messages.normalize(cx, m, "system", srv.needs_user_after_tool);
+        input.messages = try validatedMessages(srv, cx, m);
     };
     if (!is_chat and input.messages.array.len == 0) input.prompt = try legacyPrompt(srv, cx, body.get("prompt"));
     // ``body.get("max_tokens") or body.get("max_completion_tokens")``: both are ints or None by now
@@ -176,6 +184,19 @@ fn plan(srv: *Server, cx: *Cx, is_chat: bool, raw: Value) errors.Refused!Plan {
     };
 }
 
+pub fn validatedMessages(srv: *Server, cx: *Cx, input: ?Value) errors.Refused!Value {
+    const v41 = @import("deepseek_v41_text.zig");
+    if (!v41.isTemplate(srv.text.templateSource()))
+        return messages.normalize(cx, input, "system", srv.needs_user_after_tool);
+    const raw = input orelse return cx.refuse("messages must be a nonempty array");
+    var problem: []const u8 = "messages must be a nonempty array";
+    v41.validate(raw, &problem) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        return cx.refuse(problem);
+    };
+    return raw;
+}
+
 /// A completion's prompt as the model reads it: token ids as given, anything else as text.
 fn legacyPrompt(srv: *Server, cx: *Cx, prompt: ?Value) errors.Refused!chat.Prompt {
     const p = prompt orelse return .{ .text = "" };
@@ -209,7 +230,10 @@ fn promptText(srv: *Server, cx: *Cx, p: Value) errors.Refused![]const u8 {
                 const vocab = srv.text.vocabSize();
                 const toks = try cx.a.alloc(u32, items.len);
                 for (items, toks) |t, *slot| slot.* = try promptId(cx, vocab, t);
-                return srv.text.decode(cx.a, toks) catch return error.OutOfMemory;
+                return srv.text.decode(cx.a, toks) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.Template => return cx.fail(.server, "the tokenizer could not decode the completion prompt", .{}),
+                };
             }
             var parts: std.ArrayList([]const u8) = .empty;
             for (items) |item| try parts.append(cx.a, try promptText(srv, cx, item));
@@ -314,7 +338,7 @@ const Run = struct {
     fn attachCalls(r: *Run, reply: *chat.Reply) Allocator.Error!?[]Value {
         const tools = r.plan.input.tools;
         if (tools.len == 0) return null;
-        const parsed = try tool_parse.parse(r.a, reply.content, tools, r.plan.policy.maxCalls());
+        const parsed = reply.parsed_calls orelse try tool_parse.parse(r.a, reply.content, tools, r.plan.policy.maxCalls());
         const calls = parsed.calls orelse {
             if (r.plan.policy.single) reply.content = try r.plan.policy.parsedContent(r.a, parsed.content);
             return null;
@@ -373,7 +397,7 @@ const Run = struct {
         if (!r.is_chat) return;
         const message = json.newObject(r.a) catch return;
         message.put(r.a, "role", .{ .string = "assistant" }) catch return;
-        message.put(r.a, "content", if (calls != null) .null else .{ .string = reply.content }) catch return;
+        message.put(r.a, "content", if (calls != null and reply.content.len == 0) .null else .{ .string = reply.content }) catch return;
         if (calls) |c| message.put(r.a, "tool_calls", .{ .array = c }) catch return;
         warm.reply(r.srv, r.plan.input, .{ .object = message }, reply.thinking, reply.effort);
     }
@@ -389,7 +413,7 @@ const Run = struct {
         if (r.is_chat) {
             const message = try json.newObject(a);
             try message.put(a, "role", .{ .string = "assistant" });
-            try message.put(a, "content", if (calls != null) .null else .{ .string = reply.content });
+            try message.put(a, "content", if (calls != null and reply.content.len == 0) .null else .{ .string = reply.content });
             if (reply.reasoning) |t| if (t.len > 0) try message.put(a, "reasoning_content", .{ .string = t });
             if (calls) |c| try message.put(a, "tool_calls", .{ .array = c });
             try choice.put(a, "message", .{ .object = message });

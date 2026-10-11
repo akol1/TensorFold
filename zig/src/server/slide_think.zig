@@ -35,7 +35,10 @@ pub fn thinkingHead(srv: *Server, cx: *Cx, question: []const u8) !?[]const u32 {
     const asked = try a.dupe(Value, &.{try message(a, "user", question)});
     const head = try prompt.renderIds(srv, cx, .{ .array = asked }, &.{}, true, null, true);
     if (head.len == 0) return null;
-    const tail = try srv.text.decode(a, head[head.len - @min(head.len, 3) ..]);
+    const tail = srv.text.decode(a, head[head.len - @min(head.len, 3) ..]) catch |e| switch (e) {
+        error.Template => return cx.other("the tokenizer failed to decode the thinking prompt"),
+        error.OutOfMemory => return error.OutOfMemory,
+    };
     if (!std.mem.endsWith(u8, std.mem.trimEnd(u8, tail, " \t\r\n"), "<think>")) return null;
     return head;
 }

@@ -30,7 +30,7 @@ pub fn schemas(a: Allocator, tools: []const Value) Allocator.Error!Schemas {
         if (properties == .object) for (properties.object.keys(), properties.object.values()) |k, v| {
             if (v == .object) try kept.put(a, k, v);
         };
-        const name = if (function.get("name")) |n| try tool_specs.pyStr(a, n) else "";
+        const name = try tool_specs.toolName(a, tool);
         try out.put(a, try std.ascii.allocLowerString(a, name), kept);
     }
     return out;

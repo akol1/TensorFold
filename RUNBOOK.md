@@ -142,6 +142,20 @@ On one Mac, GLM loads only when its weights and caches fit in 70% of RAM, 179.2 
 `GLM_LOAD_LIMIT_GB=N` sets that limit in GB, up to the GPU's recommended working set; a value that isn't a number above 0 stops the server.
 Past 70% of RAM the server warns at startup: a load that wires most of the RAM can stall macOS until its watchdog restarts the Mac, so run nothing else large beside it.
 
+## DeepSeek V4.1 Flash: experimental draft only
+
+The resident Metal implementation is not release-qualified. The retained independent
+eight-token whole-model comparison fails the unchanged 1% NRMS gate at 4.0960584769%;
+zero greedy disagreements do not clear it. Keep the proposal in draft.
+
+The [DS4.1 draft guide](docs/deepseek-v41.md) provides pinned checkpoint revisions,
+resident-memory admission, supported/unsupported features, exact teacher IDs, build,
+diagnostic and serving commands, and the readiness gates.
+The [historical evidence record](docs/deepseek-v41-evidence.md) preserves numerical
+counterexamples, rejected experiments, residency failures and limited speed receipts.
+Historical receipts are not verification of the current-main integration.
+
+
 ## Access, context and updates
 
 To accept remote clients, choose `--host 0.0.0.0` and configure `--api-key-file` with a file readable only by its owner.

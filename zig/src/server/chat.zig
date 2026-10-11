@@ -57,66 +57,12 @@ pub const Reply = struct {
     effort: ?[]const u8 = null,
     /// ``choices[0].logprobs`` (``{"content": [...]}``) for a request that asked; null otherwise.
     logprobs: ?Value = null,
+    parsed_calls: ?tool_parse.Parsed = null,
 };
 
 pub const Failure = error{ Refused, Cancelled, Failed, OutOfMemory };
 
-/// Events the engine thread hands this request, read by the request's own thread.
-const Mailbox = struct {
-    io: std.Io,
-    gpa: Allocator,
-    mutex: std.Io.Mutex = .init,
-    cond: std.Io.Condition = .init,
-    tokens: std.ArrayList(u32) = .empty,
-    chunks: std.ArrayList(usize) = .empty, // where each round's tokens end
-    rows: std.ArrayList(api.LogprobRow) = .empty, // one a token of `tokens`, for requests with logprobs
-    cached: ?u32 = null,
-    prefilled_ns: ?i96 = null,
-    finished: bool = false,
-    reason: api.Reason = .stop,
-    stats: api.Stats = .{},
-    widths: []u32 = &.{},
-    raised: []bool = &.{},
-    telemetry: []u8 = "",
-    message: []u8 = "",
-
-    fn onEvent(ctx: *anyopaque, _: api.Id, event: *const api.Event) void {
-        const m: *Mailbox = @ptrCast(@alignCast(ctx));
-        m.mutex.lockUncancelable(m.io);
-        defer m.mutex.unlock(m.io);
-        switch (event.*) {
-            .prefilled => |cached| {
-                m.cached = cached;
-                m.prefilled_ns = std.Io.Clock.awake.now(m.io).toNanoseconds();
-            },
-            .logprobs => |r| m.rows.appendSlice(m.gpa, r) catch {},
-            .tokens => |t| {
-                m.tokens.appendSlice(m.gpa, t) catch {};
-                m.chunks.append(m.gpa, m.tokens.items.len) catch {};
-            },
-            .finished => |f| {
-                m.finished = true;
-                m.reason = f.reason;
-                m.stats = f.stats;
-                m.widths = m.gpa.dupe(u32, f.stats.prefill_widths) catch &.{};
-                m.raised = m.gpa.dupe(bool, f.stats.prefill_raised) catch &.{};
-                m.telemetry = m.gpa.dupe(u8, f.stats.telemetry_json) catch "";
-                m.message = m.gpa.dupe(u8, f.message) catch "";
-            },
-        }
-        m.cond.signal(m.io);
-    }
-
-    fn deinit(m: *Mailbox) void {
-        m.tokens.deinit(m.gpa);
-        m.chunks.deinit(m.gpa);
-        m.rows.deinit(m.gpa);
-        m.gpa.free(m.widths);
-        m.gpa.free(m.raised);
-        m.gpa.free(m.telemetry);
-        m.gpa.free(m.message);
-    }
-};
+const Mailbox = @import("chat_mailbox.zig").Mailbox;
 
 const nowNs = clock.nowNs;
 const seconds = clock.seconds;
@@ -195,9 +141,11 @@ pub fn prepare(srv: *Server, cx: *Cx, input: Input, gone: anytype) Failure!Prepa
         .decide = if (input.prompt == null and !background) prompt_mod.decideOf(srv, rendered.ids) else null,
     };
     try srv.checkFeatures(cx, f, input.tools.len > 0, thinking, rendered.ids, input.tools, &request);
+    const budget_field = f.get("thinking_budget");
+    const budget: i64 = if (budget_field != null and budget_field.?.truthy()) budget_field.?.int64() orelse 0 else srv.config.thinking_budget;
+    if (budget > 0 and !srv.info.thinking_budget)
+        return cx.refuse("thinking_budget is not supported by this native engine");
     if (thinking) {
-        const budget_field = f.get("thinking_budget");
-        const budget: i64 = if (budget_field != null and budget_field.?.truthy()) budget_field.?.int64() orelse 0 else srv.config.thinking_budget;
         if (srv.think_close.len > 0) request.loop_guard = srv.config.loop_guard;
         if ((budget > 0 or request.loop_guard) and srv.think_close.len > 0) {
             if (budget > 0) request.think_budget = @intCast(@min(budget, std.math.maxInt(u32)));
@@ -250,7 +198,13 @@ pub fn generate(srv: *Server, cx: *Cx, prepared: Prepared, sink: ?Sink, gone: an
     errdefer if (!gen.engine_done) gen.cancel(); // the engine writes to the mailbox until it says finished
     const result: Failure!Reply = blk: {
         if (sink != null and input.tools.len > 0) gen.calls = tool_stream.Streamer.init(a, input.tools) catch |e| break :blk e;
-        gen.loop(gone) catch |e| break :blk e;
+        gen.loop(gone) catch |e| break :blk switch (e) {
+            error.Template => cx.other("the tokenizer failed to decode the reply"),
+            error.Cancelled => error.Cancelled,
+            error.Failed => error.Failed,
+            error.OutOfMemory => error.OutOfMemory,
+            error.Refused => error.Refused,
+        };
         break :blk gen.finish(cx, prepared.prompt_len, received, thinking, effort, prepared.sampled, prepared.drafts);
     };
     if (result) |_| {} else |e| logEnded(input.id, e, cx.message, prepared.prompt_len, gen.collected.items.len, seconds(nowNs(io) - received));
@@ -348,7 +302,7 @@ const Generation = struct {
     }
 
     /// The engine's stop check, here: the newest tokens' text holds a stop string.
-    fn stopHit(g: *Generation) Allocator.Error!bool {
+    fn stopHit(g: *Generation) @import("model_text.zig").Error!bool {
         if (g.stops.strings.len == 0) return false;
         const t = g.collected.items;
         const tail = t[t.len -| g.stops.tail()..];
@@ -358,7 +312,7 @@ const Generation = struct {
     }
 
     /// Commits a round's tokens as ``LaneStream.commit`` would, then streams what they add.
-    fn commit(g: *Generation, chunk: []const u32) Failure!void {
+    fn commit(g: *Generation, chunk: []const u32) (Failure || @import("model_text.zig").Error)!void {
         var landed: usize = 0;
         for (chunk) |t| {
             if (g.reason != null) break;
@@ -437,7 +391,7 @@ const Generation = struct {
     }
 
     /// Takes rounds until the reply ends; a client that leaves cancels it.
-    fn loop(g: *Generation, gone: anytype) Failure!void {
+    fn loop(g: *Generation, gone: anytype) (Failure || @import("model_text.zig").Error)!void {
         const m = g.box;
         while (true) {
             m.mutex.lockUncancelable(m.io);
@@ -479,7 +433,10 @@ const Generation = struct {
         };
         const finished_ns = nowNs(g.srv.io);
         const content_tokens = if (g.ignore_eos) g.collected.items else reply_text.stripTrailing(g.collected.items, g.srv.eos);
-        const raw = try g.srv.text.decode(a, content_tokens);
+        const raw = g.srv.text.decode(a, content_tokens) catch |e| switch (e) {
+            error.Template => return cx.other("the tokenizer failed to decode the reply"),
+            error.OutOfMemory => return error.OutOfMemory,
+        };
         const visible = g.stops.visible(raw, false);
         // closed before the think split, so a call ending an unclosed think block is the answer
         const close = try g.closeCall(visible);
@@ -496,19 +453,31 @@ const Generation = struct {
             content = h.content;
             reasoning = h.reasoning;
         }
+        var final_calls: std.ArrayList(Value) = .empty;
+        if (g.calls) |*c| {
+            if (tool_parse.dsmlOpening(content, 0) != null)
+                try c.feed(content, &final_calls);
+            if (c.invalidDsml(content))
+                return cx.other("the model generated a malformed or unoffered DeepSeek V4.1 tool call");
+        }
+        const parsed_calls = if (g.tools.len > 0 and tool_parse.dsmlOpening(content, 0) != null)
+            try tool_parse.parse(a, content, g.tools, null)
+        else
+            null;
+        if (parsed_calls) |parsed| if (reply_text.findTag(parsed.content, 0, "<｜DSML｜ calls>") != null)
+            return cx.other("the model generated a malformed or unoffered DeepSeek V4.1 tool call");
         if (g.sink) |sink| {
             const thought = g.streamed_reasoning.text.items;
             if (reasoning) |r| if (std.mem.startsWith(u8, r, thought) and r.len > thought.len)
                 try g.emit(sink, try deltaOf(a, "reasoning_content", r[thought.len..]));
-            const shown = if (g.calls != null) try reply_text.finishedProse(a, content) else content;
+            const shown = if (parsed_calls) |parsed| parsed.content else if (g.calls != null) try reply_text.finishedProse(a, content) else content;
             const sent = g.streamed.text.items;
             if (std.mem.startsWith(u8, shown, sent) and shown.len > sent.len) try g.emit(sink, .{ .string = shown[sent.len..] });
-            if (g.calls) |*c| if (close.len > 0) {
-                // the streamer reads the closers as markup the model wrote, so the call ends with the same deltas
-                var out: std.ArrayList(Value) = .empty;
-                try c.feed(if (g.thinking) content else text, &out);
-                for (out.items) |d| try g.emit(sink, d);
+            if (g.calls) |*c| if (close.len > 0 and parsed_calls == null) {
+                // Preserve legacy streaming's synthesized-closer path and delta ordering.
+                try c.feed(if (g.thinking) content else text, &final_calls);
             };
+            for (final_calls.items) |d| try g.emit(sink, d);
         }
         const prefilled = m.prefilled_ns;
         const decode_s: f64 = if (prefilled) |p| @max(0, seconds(finished_ns - p)) else 0;
@@ -551,6 +520,7 @@ const Generation = struct {
             .stop_sequence = g.stops.matched(raw),
             .reasoning = reasoning,
             .tool_calls_streamed = g.calls != null and g.calls.?.streamed,
+            .parsed_calls = parsed_calls,
             .finish_reason = reason,
             .prompt_tokens = prompt_len,
             .cached_tokens = m.cached orelse 0,
@@ -571,21 +541,7 @@ const Generation = struct {
     }
 };
 
-/// The request's stop strings as the engine checks them after each token: the newest tokens' text holds one.
-const StopHook = struct {
-    srv: *Server,
-    stops: reply_text.Stops,
-
-    fn check(ctx: *anyopaque, emitted: []const u32) bool {
-        const h: *StopHook = @ptrCast(@alignCast(ctx));
-        var arena: std.heap.ArenaAllocator = .init(h.srv.gpa);
-        defer arena.deinit();
-        const tail = emitted[emitted.len -| h.stops.tail()..];
-        const text = h.srv.text.decode(arena.allocator(), tail) catch return false;
-        for (h.stops.strings) |stop| if (std.mem.indexOf(u8, text, stop) != null) return true;
-        return false;
-    }
-};
+const StopHook = @import("chat_stop.zig").Hook;
 
 fn decodeText(t: anytype, a: Allocator, tokens: []const u32) ![]u8 {
     return t.decode(a, tokens);

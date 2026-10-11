@@ -102,3 +102,14 @@ pub const core_shared_attention = @embedFile("core/shared_attention.metal");
 pub const core_deltanet = @embedFile("core/deltanet.metal");
 /// 4-bit projections on simdgroup-matrix tiles before the M5 (core/simd_qmm.zig).
 pub const core_simd_qmm = @embedFile("core/simd_qmm.metal");
+
+pub const core_exl3_projection = @embedFile("core/exl3_projection.metal");
+pub const core_expert_groups = @embedFile("core/expert_groups.metal");
+pub const deepseek_v41_engram = @embedFile("deepseek_v41/engram.metal");
+pub const deepseek_v41_ops = @embedFile("deepseek_v41/ops.metal");
+pub const deepseek_v41_mhc = @embedFile("deepseek_v41/mhc.metal");
+pub const deepseek_v41_route = @embedFile("deepseek_v41/route.metal");
+pub const deepseek_v41_kv = @embedFile("deepseek_v41/kv.metal");
+pub const deepseek_v41_rope = @embedFile("deepseek_v41/rope.metal");
+pub const deepseek_v41_index = @embedFile("deepseek_v41/index.metal");
+pub const deepseek_v41_csa2 = @embedFile("deepseek_v41/csa2.metal");

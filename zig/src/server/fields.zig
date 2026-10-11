@@ -211,9 +211,19 @@ pub fn thinkingFields(cx: *Cx, body: Value, levels: []const []const u8) errors.R
         effort = k.field("reasoning_effort");
     };
     if (effort) |e| {
-        if (e != .string or !isEffort(e.string)) return cx.refuse("reasoning_effort must be none, minimal, low, medium, high, xhigh or max");
-        out.effort = coerceEffort(e.string, levels);
-        out.enable = !std.mem.eql(u8, e.string, "none");
+        const numeric_v41 = for (levels) |level| {
+            if (std.mem.eql(u8, level, "numeric")) break true;
+        } else false;
+        if (e == .int and numeric_v41) {
+            const n = e.int64() orelse return cx.refuse("DeepSeek V4.1 reasoning_effort must be an integer from 1 to 100");
+            if (n < 1 or n > 100) return cx.refuse("DeepSeek V4.1 reasoning_effort must be an integer from 1 to 100");
+            out.effort = e.int;
+            out.enable = true;
+        } else {
+            if (e != .string or !isEffort(e.string)) return cx.refuse("reasoning_effort must be none, minimal, low, medium, high, xhigh or max");
+            out.effort = coerceEffort(e.string, levels);
+            out.enable = !std.mem.eql(u8, e.string, "none");
+        }
     }
     if (kw_object) if (enable) |on| {
         out.enable = on.truthy();
@@ -258,6 +268,7 @@ pub fn coerceEffort(effort: []const u8, levels: []const []const u8) []const u8 {
 /// The efforts a chat template names in quotes (``effort_levels``).
 pub fn effortLevels(a: Allocator, template: []const u8) Allocator.Error![]const []const u8 {
     var found: std.ArrayList([]const u8) = .empty;
+    if (@import("deepseek_v41_text.zig").isTemplate(template)) try found.append(a, "numeric");
     for (effort_order) |name| {
         var at: usize = 0;
         while (std.mem.indexOfPos(u8, template, at, name)) |i| : (at = i + 1) {

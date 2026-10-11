@@ -27,7 +27,8 @@ pub const isTitle = messages_mod.isTitleRequest;
 
 /// ``render_prompt_ids``: messages normalized for this template, rendered, and a dangling ``<think>`` closed.
 pub fn renderIds(srv: *Server, cx: *Cx, messages: Value, tools: []const Value, thinking: bool, effort: ?[]const u8, generation: bool) errors.Refused![]const u32 {
-    const normalized = try messages_mod.toolArguments(cx, try messages_mod.normalize(cx, messages, srv.late_system, srv.needs_user_after_tool));
+    const native_v41 = @import("deepseek_v41_text.zig").isTemplate(srv.text.templateSource());
+    const normalized = if (native_v41) messages else try messages_mod.toolArguments(cx, try messages_mod.normalize(cx, messages, srv.late_system, srv.needs_user_after_tool));
     var problem: []const u8 = "";
     const options: model_text.RenderOptions = .{
         .tools = if (tools.len > 0) Value{ .array = @constCast(tools) } else null,
@@ -40,11 +41,14 @@ pub fn renderIds(srv: *Server, cx: *Cx, messages: Value, tools: []const Value, t
         error.Template => return cx.fail(.server, "{s}", .{problem}),
     };
     if (!thinking and generation and ids.len > 0) {
-        const last = try srv.text.decode(cx.a, ids[ids.len - 1 ..]);
+        const last = srv.text.decode(cx.a, ids[ids.len - 1 ..]) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Template => return cx.fail(.server, "the tokenizer cannot decode the generation prompt", .{}),
+        };
         if (std.mem.eql(u8, @import("reply_text.zig").pyStrip(last), "<think>")) {
             const close = srv.text.encode(cx.a, "</think>", false) catch |e| switch (e) {
                 error.OutOfMemory => return error.OutOfMemory,
-                error.Template => &[_]u32{},
+                error.Template => return cx.fail(.server, "the tokenizer cannot encode the thinking close marker", .{}),
             };
             if (close.len == 1) ids = try std.mem.concat(cx.a, u32, &.{ ids, close });
         }

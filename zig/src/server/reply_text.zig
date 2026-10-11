@@ -13,6 +13,7 @@ pub const calls = [_][2][]const u8{
     .{ "<tool_call>", "</tool_call>" },
     .{ "<|tool_call>", "<tool_call|>" },
     .{ "<\u{ff5c}DSML\u{ff5c}tool_calls>", "</\u{ff5c}DSML\u{ff5c}tool_calls>" },
+    .{ "<｜DSML｜ calls>", "</｜DSML｜ calls>" },
 };
 
 /// ``text.find(tag, from)`` led by a vector scan for the tag's first byte: markup is rare in prose, so it is fast.
@@ -99,6 +100,47 @@ pub fn hideToolCalls(a: Allocator, text: []const u8, finished: bool) Allocator.E
     return hideInto(a, &out, text, finished);
 }
 
+fn namespaceByte(ch: u8) bool {
+    return std.ascii.isAlphanumeric(ch) or ch == '_' or ch == '.' or ch == '-' or ch >= 0x80;
+}
+
+fn namespacedCall(text: []const u8, from: usize) ?struct { start: usize, open_end: usize } {
+    var cursor = from;
+    while (std.mem.indexOfScalarPos(u8, text, cursor, '<')) |start| {
+        cursor = start + 1;
+        if (cursor == text.len or text[cursor] == '.' or text[cursor] == '-') continue;
+        var end = cursor;
+        while (end < text.len and namespaceByte(text[end])) end += 1;
+        if (end == cursor or !std.ascii.startsWithIgnoreCase(text[end..], ":tool_call>")) continue;
+        return .{ .start = start, .open_end = end + ":tool_call>".len };
+    }
+    return null;
+}
+
+fn partialNamespace(text: []const u8) usize {
+    const start = std.mem.lastIndexOfScalar(u8, text, '<') orelse return 0;
+    const tail = text[start + 1 ..];
+    if (tail.len > 0 and (tail[0] == '.' or tail[0] == '-')) return 0;
+    var end: usize = 0;
+    while (end < tail.len and namespaceByte(tail[end])) end += 1;
+    if (end == tail.len) return text.len - start;
+    if (end == 0 or tail[end] != ':') return 0;
+    const suffix = tail[end + 1 ..];
+    return if (std.ascii.startsWithIgnoreCase("tool_call>", suffix)) text.len - start else 0;
+}
+
+fn namespacedClose(text: []const u8, open: anytype) ?usize {
+    const name = text[open.start + 1 .. open.open_end];
+    var cursor = open.open_end;
+    while (std.mem.indexOfScalarPos(u8, text, cursor, '<')) |start| {
+        cursor = start + 1;
+        if (std.mem.startsWith(u8, text[start..], "</") and
+            std.ascii.startsWithIgnoreCase(text[start + 2 ..], name))
+            return start + 2 + name.len;
+    }
+    return null;
+}
+
 /// ``hideToolCalls`` into ``out`` (cleared first); text without a call block comes back as a slice of ``text``.
 pub fn hideInto(a: Allocator, out: *std.ArrayList(u8), text: []const u8, finished: bool) Allocator.Error![]const u8 {
     out.clearRetainingCapacity();
@@ -112,12 +154,19 @@ pub fn hideInto(a: Allocator, out: *std.ArrayList(u8), text: []const u8, finishe
                 which = i;
             }
         };
+        const namespaced = namespacedCall(text, pos);
+        if (namespaced) |open| if (start == null or open.start < start.?) {
+            try out.appendSlice(a, text[pos..open.start]);
+            pos = namespacedClose(text, open) orelse return out.items;
+            continue;
+        };
         if (start == null) {
             const tail = text[pos..];
             var held: usize = 0;
-            if (!finished) for (calls) |c| {
-                held = @max(held, partialTag(tail, c[0]));
-            };
+            if (!finished) {
+                for (calls) |c| held = @max(held, partialTag(tail, c[0]));
+                held = @max(held, partialNamespace(tail));
+            }
             if (pos == 0) return text[0 .. text.len - held];
             try out.appendSlice(a, tail[0 .. tail.len - held]);
             return out.items;

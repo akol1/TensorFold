@@ -21,6 +21,7 @@ pub fn deltas(a: Allocator, calls: []const Value) Allocator.Error![]Value {
         const kind = call.get("type");
         try head.put(a, "type", .{ .string = if (kind != null and kind.?.truthy()) try tool_specs.pyStr(a, kind.?) else "function" });
         try head.put(a, "function", .{ .object = head_fn });
+        if (call.field("namespace")) |namespace| try head.put(a, "namespace", namespace);
         try out.append(a, try wrapCalls(a, .{ .object = head }));
         const args = function.get("arguments");
         const text = if (args != null and args.?.truthy()) try tool_specs.pyStr(a, args.?) else "";

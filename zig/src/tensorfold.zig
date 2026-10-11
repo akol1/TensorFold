@@ -67,3 +67,19 @@ pub const bf16_topk = @import("bf16_topk");
 pub const bf16_topk_gpu = @import("bf16_topk_gpu");
 
 pub const tree_commit_gpu = @import("tree_commit_gpu");
+
+pub const exl3_projection = @import("core/exl3_projection.zig");
+pub const gpu_counters = @import("core/gpu_counters.zig");
+pub const expert_groups = @import("core/expert_groups.zig");
+pub const deepseek_v41 = @import("families/deepseek_v41/model.zig");
+pub const deepseek_v41_profiler = @import("families/deepseek_v41/profiler.zig");
+pub const deepseek_v41_config = @import("families/deepseek_v41/config.zig");
+pub const deepseek_v41_load = @import("families/deepseek_v41/load.zig");
+pub const deepseek_v41_weights = @import("families/deepseek_v41/weights.zig");
+
+test {
+    _ = @import("core/exl3_projection_gpu_test.zig");
+    _ = @import("families/deepseek_v41/engram.zig");
+    _ = @import("families/deepseek_v41/csa2.zig");
+    _ = @import("families/deepseek_v41/ops_check.zig");
+}

@@ -1,8 +1,8 @@
 //! Plain V4.1 execution over resident EXL3 weights and source-owned packed caches.
 const std = @import("std");
 const mtl = @import("metal");
-const checkpoint = @import("../../../core/checkpoint_metal.zig");
-const exl3 = @import("../../../core/exl3_projection.zig");
+const checkpoint = @import("../../../../core/checkpoint_metal.zig");
+const exl3 = @import("../../../../core/exl3_projection.zig");
 const config = @import("config.zig");
 const load = @import("load.zig");
 const weights = @import("weights.zig");
@@ -15,7 +15,7 @@ const route = @import("route.zig");
 const engram = @import("engram.zig");
 const View = @import("view.zig").View;
 const gpu_counters = @import("profiler.zig");
-const expert_groups = @import("../../../core/expert_groups.zig");
+const expert_groups = @import("../../../../core/expert_groups.zig");
 
 pub const prefill_step = 256;
 pub const Logits = enum { none, last, all };
@@ -312,9 +312,17 @@ pub const Model = struct {
     fn moe(m: *Model, enc: mtl.ComputeEncoder, w: *const weights.Moe, rows: u32) !void {
         const ws = &m.workspace;
         const p = &m.pipelines;
-        ops.encodeDense(enc, &p.ops, ws.view(.normalized), tensor(w.gate), ws.view(.router_logits), .{ .rows = rows, .k = 5120, .n = 384, .x_stride = 5120, .w_stride = 5120, .y_stride = 384, .w_dtype = .f16, .y_dtype = .f32 });
+        ops.encodeDense(enc, &p.ops, ws.view(.normalized), tensor(w.gate), ws.view(.router_logits), .{ .rows = rows, .k = 5120, .n = 384, .x_stride = 5120, .w_stride = 5120, .y_stride = 384, .w_dtype = switch (w.gate.dtype) {
+            .bf16 => .bf16,
+            else => .f16,
+        }, .y_dtype = .f32 });
         enc.barrier();
-        route.encode(enc, &p.route, ws.view(.router_logits), tensor(w.bias), ws.view(.route_ids), ws.view(.route_weights), .{ .rows = rows, .bias_dtype = .f16 });
+        route.encode(enc, &p.route, ws.view(.router_logits), tensor(w.bias), ws.view(.route_ids), ws.view(.route_weights), .{ .rows = rows, .bias_dtype = switch (w.bias.dtype) {
+            .f32 => .f32,
+            .f16 => .f16,
+            .bf16 => .bf16,
+            else => .f16,
+        } });
         enc.barrier();
         const grouped: ?expert_groups.Scratch = if (m.grouped_prefill and rows >= 8) try ws.grouping(rows) else null;
         var routed_rows = exl3.Rows{ .count = @as(usize, rows) * 6, .x_stride = 5120, .y_stride = 2304, .input_rows = rows, .output_rows = @as(usize, rows) * 6, .routes = .{ .ids = convert(ws.view(.route_ids)), .repeat = 6 } };

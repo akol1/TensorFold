@@ -1,9 +1,9 @@
 //! Strict pinned backbone schema and borrowed resident bindings; only expert descriptor tables are owned.
 const std = @import("std");
 const mtl = @import("metal");
-const cp = @import("../../../../core/checkpoint_metal.zig");
-const st = @import("../../../../core/safetensors.zig");
-const exl3 = @import("../../../../core/exl3_projection.zig");
+const cp = @import("../../../core/checkpoint_metal.zig");
+const st = @import("../../../core/safetensors.zig");
+const exl3 = @import("../../../core/exl3_projection.zig");
 const load = @import("load.zig");
 
 pub const Tensor = cp.Tensor;

@@ -2,7 +2,7 @@
 //! bookkeeping only and never add a GPU readback, wait or allocation while profiling is disabled.
 const std = @import("std");
 const mtl = @import("metal");
-const counters = @import("../../core/gpu_counters.zig");
+const counters = @import("../../../core/gpu_counters.zig");
 
 pub const Stage = enum { engram, mhc, attention, moe, head, other };
 pub const stage_count = @typeInfo(Stage).@"enum".field_names.len;

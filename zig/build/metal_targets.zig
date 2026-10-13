@@ -273,6 +273,9 @@ pub fn metalTargets(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     b.step("test-flashnext-load-admission", "CPU-only Flash Next runtime quantization admission").dependOn(&load_admission_run.step);
     test_step.dependOn(&load_admission_run.step);
     test_step.dependOn(dsv41_build.weights(b, target, optimize, metal));
+    const dsv41 = dsv41_build.checks(b, target, optimize, metal, sources, engine);
+    test_step.dependOn(dsv41.device);
+    test_step.dependOn(dsv41.reference);
     const pack_cache_cases = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("zig/flashnext_pack_cache_cases.zig"),
         .target = target,
@@ -291,6 +294,7 @@ pub fn metalTargets(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
         .{ .name = "tf-lfm2-exact", .path = "zig/tests/lfm2_exact.zig", .about = "LFM2-MoE prompt chunks, windows and committed-state exactness" },
         .{ .name = "tf-lfm2-fp64", .path = "zig/tests/lfm2_fp64.zig", .about = "LFM2 projection classes and attention on the tensor units, the tiles and the twin, each against float64" },
         .{ .name = "tensorfold", .path = "zig/src/main.zig", .about = "The native engine's command line" },
+        .{ .name = "tf-dsv41-run", .path = "zig/deepseek_v41_run.zig", .about = "Full-resident DeepSeek V4.1 admission, teacher-forced logits, chunk seams and decode timing" },
         .{ .name = "tf-nemotron-fixtures", .path = "zig/tests/nemotron_fixtures.zig", .about = "Nemotron kernels against the Python engine's captured ops" },
         .{ .name = "tf-nemotron-bench", .path = "zig/tests/nemotron_bench.zig", .about = "One-row projection kernels timed by tile count" },
         .{ .name = "tf-nemotron-wide", .path = "zig/tests/nemotron_wide.zig", .about = "Window costs by kernel class and expert overlap of drafted, sibling and stream rows" },

@@ -11,6 +11,7 @@ const exlr8_build = @import("exlr8.zig");
 const server_build = @import("server.zig");
 const golden_build = @import("golden.zig");
 const contract_build = @import("kernel_contract.zig");
+const dsv41_build = @import("deepseek_v41.zig");
 const metal_lists = @import("metal_source_lists.zig");
 const kernels = metal_lists.kernels;
 const generated = metal_lists.generated;
@@ -271,6 +272,7 @@ pub fn metalTargets(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     const load_admission_run = b.addRunArtifact(load_admission_cases);
     b.step("test-flashnext-load-admission", "CPU-only Flash Next runtime quantization admission").dependOn(&load_admission_run.step);
     test_step.dependOn(&load_admission_run.step);
+    test_step.dependOn(dsv41_build.weights(b, target, optimize, metal));
     const pack_cache_cases = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("zig/flashnext_pack_cache_cases.zig"),
         .target = target,

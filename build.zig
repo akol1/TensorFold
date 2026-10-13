@@ -208,11 +208,10 @@ pub fn build(b: *std.Build) void {
 }
 
 /// The native Metal server build is owned by the shared Metal target module.
+const metalTargets = metal_build.metalTargets;
 const nativeServer = metal_build.nativeServer;
 
 /// macOS: the metallib, the Metal runtime's test programs and the engine over Metal.
-const metalTargets = metal_build.metalTargets;
-
 /// The server and distribution use the same embedded-source Metal engine.
 const metalEngineModules = metal_build.metalEngineModules;
 

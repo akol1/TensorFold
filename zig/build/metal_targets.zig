@@ -1,5 +1,6 @@
 //! Metal build targets and their shared source/library/module construction.
 const std = @import("std");
+const dsv41_build = @import("deepseek_v41.zig");
 const builtin = @import("builtin");
 const qwen27_build = @import("qwen27.zig");
 const core_checks = @import("core_checks.zig");
@@ -170,6 +171,7 @@ pub fn metalTargets(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     const programs = [_]struct { name: []const u8, path: []const u8, about: []const u8 }{
         .{ .name = "tf-metal-tests", .path = "zig/tests/gpu_tests.zig", .about = "GPU runtime tests" },
         .{ .name = "tf-dispatch-bench", .path = "zig/tests/dispatch_bench.zig", .about = "Dispatch boundary benchmark" },
+        .{ .name = "tf-dsv41-run", .path = "zig/deepseek_v41_run.zig", .about = "Full-resident DeepSeek V4.1 admission, teacher-forced logits, chunk seams and decode timing" },
         .{ .name = "tf-kernel-exact", .path = "zig/tests/kernel_exact.zig", .about = "Bit-exact check of a kernel against an MLX oracle case" },
     };
     for (programs) |p| {
@@ -276,6 +278,10 @@ pub fn metalTargets(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     const load_admission_run = b.addRunArtifact(load_admission_cases);
     b.step("test-flashnext-load-admission", "CPU-only Flash Next runtime quantization admission").dependOn(&load_admission_run.step);
     test_step.dependOn(&load_admission_run.step);
+    test_step.dependOn(dsv41_build.weights(b, target, optimize, metal));
+    const dsv41 = dsv41_build.checks(b, target, optimize, metal, mods.sources, mods.engine);
+    test_step.dependOn(dsv41.device);
+    test_step.dependOn(dsv41.reference);
     const pack_cache_cases = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("zig/flashnext_pack_cache_cases.zig"),
         .target = target,

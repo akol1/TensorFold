@@ -1,8 +1,8 @@
 //! Plain V4.1 execution over resident EXL3 weights and source-owned packed caches.
 const std = @import("std");
 const mtl = @import("metal");
-const checkpoint = @import("../../../../core/checkpoint_metal.zig");
-const exl3 = @import("../../../../core/exl3_projection.zig");
+const checkpoint = @import("../../../core/checkpoint_metal.zig");
+const exl3 = @import("../../../core/exl3_projection.zig");
 const config = @import("config.zig");
 const load = @import("load.zig");
 const weights = @import("weights.zig");
@@ -15,7 +15,7 @@ const route = @import("route.zig");
 const engram = @import("engram.zig");
 const View = @import("view.zig").View;
 const gpu_counters = @import("profiler.zig");
-const expert_groups = @import("../../../../core/expert_groups.zig");
+const expert_groups = @import("../../../core/expert_groups.zig");
 
 pub const prefill_step = 256;
 pub const Logits = enum { none, last, all };
@@ -227,7 +227,10 @@ pub const Model = struct {
                 try m.profileSpan(&enc, .engram);
                 try engram.encodeGather(enc, &p.engram, .{ .weight = tensor(g.table), .scale = tensor(g.scales), .rows = @intCast(g.table.shape[0]) }, ws.view(if (index == 1) .engram_ids_0 else .engram_ids_1), ws.view(.engram_gather), rows, 6144);
                 try m.project(enc, g.wkv, ws.view(.engram_gather), ws.view(.engram_kv), rows, 6144, 25600, .bf16);
-                try engram.encodeGate(enc, &p.engram, .{ .q_weight = tensor(g.q_weight), .k_weight = tensor(g.k_weight), .dim = 5120, .copies = 4, .hidden_stride = 20480, .kv_stride = 25600, .output_stride = 20480, .eps = m.cfg.text_config.rms_norm_eps }, ws.view(.stream), ws.view(.engram_kv), null, ws.view(.stream), rows);
+                try engram.encodeGate(enc, &p.engram, .{ .q_weight = tensor(g.q_weight), .k_weight = tensor(g.k_weight), .dim = 5120, .copies = 4, .weight_dtype = switch (g.q_weight.dtype) {
+                    .bf16 => .bf16,
+                    else => .f32,
+                }, .hidden_stride = 20480, .kv_stride = 25600, .output_stride = 20480, .eps = m.cfg.text_config.rms_norm_eps }, ws.view(.stream), ws.view(.engram_kv), null, ws.view(.stream), rows);
             }
             try m.profileSpan(&enc, .mhc);
             m.mixes(enc, layer.hc_attn, ws.view(.attention_pre), rows);

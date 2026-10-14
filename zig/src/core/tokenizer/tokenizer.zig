@@ -9,6 +9,10 @@ pub const eos = @import("eos.zig");
 /// A digest of what ids mean as loaded (identity.zig): what Recall keys its record by.
 pub const identity = @import("identity.zig").identity;
 
+/// The generated NFKD/mark/CCC tables the Engram token map's normalizer chain uses;
+/// re-exported so family code reaches them through this module.
+pub const nfkd_data = @import("nfkd_data.zig");
+
 pub const Kind = models.Kind;
 pub const Error = models.Error || std.json.ParseError(std.json.Scanner) || error{ UnsupportedAddedToken, BadRequestSpans, UnsafeNormalizedAddedTokenMask, UnsafeAddedTokenMask };
 pub const Span = [2]usize;

@@ -80,18 +80,32 @@ kernel void dsv41_sparse_attention(device const ushort *q [[buffer(0)]], device 
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         float correction = exp(mx - next_max);
-        float tile_sum = 0;
-        for (uint d = 0; d < p.width / 32; ++d) acc[d] *= correction;
+        float tile_sum_hi = 0, tile_sum_lo = 0;
+        float acc_hi[16], acc_lo[16];
+        for (uint d = 0; d < p.width / 32; ++d) {
+            acc_hi[d] = acc[d] * correction;
+            acc_lo[d] = fma(acc[d], correction, -acc_hi[d]);
+        }
         for (uint j = 0; j < 64; ++j) {
             float probability = exp(scores[j] - next_max);
-            tile_sum += probability;
+            float t = tile_sum_hi + probability;
+            tile_sum_lo += (tile_sum_hi - t) + probability;
+            tile_sum_hi = t;
             float rounded = dsv41_bf(dsv41_round(probability));
             uint kind = 0;
             device const uchar *key = base + j < count ? dsv41_attn_key(base + j, row, ring, chunk, main, indices, p, kind) : nullptr;
-            if (key) for (uint d = 0; d < p.width / 32; ++d)
-                acc[d] += rounded * dsv41_unpack(key, lane + d * 32, p.width, kind ? p.main_block : 32, kind);
+            if (key) for (uint d = 0; d < p.width / 32; ++d) {
+                float v = dsv41_unpack(key, lane + d * 32, p.width, kind ? p.main_block : 32, kind);
+                float prod_hi = rounded * v;
+                float prod_lo = fma(rounded, v, -prod_hi);
+                float t2 = acc_hi[d] + prod_hi;
+                acc_lo[d] += (acc_hi[d] - t2) + prod_hi;
+                acc_hi[d] = t2;
+                acc_lo[d] += prod_lo;
+            }
         }
-        sum = sum * correction + tile_sum;
+        for (uint d = 0; d < p.width / 32; ++d) acc[d] = acc_hi[d] + acc_lo[d];
+        sum = sum * correction + (tile_sum_hi + tile_sum_lo);
         mx = next_max;
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }

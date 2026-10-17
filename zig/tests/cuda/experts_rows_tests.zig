@@ -31,7 +31,8 @@ const Rig = struct {
 
     fn zeros(r: *Rig, n: usize) !u64 {
         var b = try cuda.DeviceBuffer.alloc(r.gpu.d, @max(n, 16));
-        try b.fill8(0, null);
+        // on the kernels' stream: it is non-blocking, so a memset on the default stream may land after them
+        try b.fill8(0, r.s.handle);
         try r.bufs.append(r.gpu.gpa, b);
         return b.ptr;
     }

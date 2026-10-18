@@ -249,8 +249,7 @@ kernel void tf_exl3_dense(const device half* rotated [[buffer(0)]],
                           const device uint* input_ids [[buffer(4)]],
                           uint2 g [[thread_position_in_grid]]) {
   const uint row = a.input_ids ? input_ids[g.y] : g.y;
-  // The reference accumulates this dot in FP64 sequentially; a hi/lo pair carries the
-  // same exactness through FP32 (the products of half and bf16 values are exact here).
+  // The reference's dot is FP64-sequential; this hi/lo pair carries the same exactness through FP32.
   float hi = 0, lo = 0;
   for (uint k = 0; k < a.k; ++k) {
     float prod = float(rotated[ulong(g.y) * a.k + k]) * float(weight[ulong(g.x) * a.k + k]);

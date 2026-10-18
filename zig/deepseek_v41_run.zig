@@ -31,8 +31,9 @@ fn usage(code: u8) noreturn {
         "       tf-dsv41-run hc-sameinput MODEL TABLES TRACE_CPU_BIN OUT_DIR [LAYER]\n" ++
         "       tf-dsv41-run moe-sameinput MODEL TABLES TRACE_GPU_BIN OUT_DIR [LAYER]\n" ++
         "       tf-dsv41-run generate MODEL TABLES IDS_JSON OUT_DIR [TOKENS]\n" ++
+        "       tf-dsv41-run lanes MODEL TABLES IDS_JSON OUT_DIR [CHUNK] [CONTEXT]\n" ++
         "IDS_JSON: nonempty JSON array of token IDs below 129280.\n" ++
-        "Limits: oracle/trace 16 IDs; profile 256 IDs; teacher/seams 4096 IDs.\n" ++
+        "Limits: oracle/trace 16 IDs; profile 256 IDs; teacher/seams/lanes 4096 IDs.\n" ++
         "History: TOKEN below 4096; retained normalized prefix at most 256 MiB.\n" ++
         "Local diagnostics do not qualify the model. Oracle retains the independent 1% NRMS gate.\n", .{});
     std.process.exit(code);
@@ -46,13 +47,26 @@ fn validArguments(args: []const [:0]const u8) bool {
     for ([_][]const u8{ "plan", "operators" }, [_]usize{ 4, 5 }) |name, count|
         if (std.mem.eql(u8, mode, name)) return args.len == count;
     if (std.mem.eql(u8, mode, "attention-history-sameinput")) return args.len == 8;
-    for ([_][]const u8{ "teacher", "generate", "attention-sameinput", "hc-sameinput", "moe-sameinput", "margins", "lanes" }) |name|
+    for ([_][]const u8{ "teacher", "generate", "attention-sameinput", "hc-sameinput", "moe-sameinput", "margins" }) |name|
         if (std.mem.eql(u8, mode, name)) return args.len == 6 or args.len == 7;
     if (std.mem.eql(u8, mode, "lanes")) return args.len == 6 or args.len == 7 or args.len == 8;
     for ([_][]const u8{ "seams", "oracle", "profile", "trace" }) |name|
         if (std.mem.eql(u8, mode, name)) return args.len == 6;
     return false;
 }
+test "lanes takes its optional chunk and context arguments" {
+    const six = [_][:0]const u8{ "tf-dsv41-run", "lanes", "model", "tables", "ids.json", "out" };
+    const seven = [_][:0]const u8{ "tf-dsv41-run", "lanes", "model", "tables", "ids.json", "out", "16" };
+    const eight = [_][:0]const u8{ "tf-dsv41-run", "lanes", "model", "tables", "ids.json", "out", "16", "4096" };
+    const five = [_][:0]const u8{ "tf-dsv41-run", "lanes", "model", "tables", "ids.json" };
+    const nine = [_][:0]const u8{ "tf-dsv41-run", "lanes", "model", "tables", "ids.json", "out", "16", "4096", "x" };
+    try std.testing.expect(validArguments(&six));
+    try std.testing.expect(validArguments(&seven));
+    try std.testing.expect(validArguments(&eight));
+    try std.testing.expect(!validArguments(&five));
+    try std.testing.expect(!validArguments(&nine));
+}
+
 fn argmax(row: []const f32) !u32 {
     var best: u32 = 0;
     if (row.len == 0) return error.EmptyLogits;

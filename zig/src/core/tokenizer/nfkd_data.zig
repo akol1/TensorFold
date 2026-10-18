@@ -1,6 +1,6 @@
 //! NFKD data for the Engram token-map normalizer chain, generated from
 //! unicodedata 16.0.0 (the version unicode_data.zig pins). Fork tool:
-//! .agents/tools/gen_nfkd_tables.py regenerates this file.
+//! tools/zig/nfkd_tables.py regenerates this file.
 
 pub const Decomp = struct { cp: u21, start: u32, len: u8 };
 

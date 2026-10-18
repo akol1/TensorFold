@@ -318,7 +318,7 @@ fn refusal(a: Allocator, o: api.Open, dense: bool) !?[]const u8 {
     return try std.fmt.allocPrint(a, "--learn learns prompt prefixes for Nemotron, Flash Next and GLM-5.3-Flash only{s}: serve {s} without --learn, --learn-dir or --learn-gib", .{ or_talks, name });
 }
 
-/// A qwen3_5 checkpoint opens the 27B engine unless it has the pinned 2B's hidden size or a tied head, which stay on the 2B's.
+/// A qwen3_5 checkpoint opens the 27B engine unless it is the pinned 2B by hidden size or tied head.
 fn qwen27Engine(a: Allocator, io: std.Io, dir: []const u8) bool {
     const path = std.fs.path.join(a, &.{ dir, "config.json" }) catch return true;
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(16 << 20)) catch return true;

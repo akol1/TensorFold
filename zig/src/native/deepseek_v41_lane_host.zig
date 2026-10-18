@@ -1,5 +1,4 @@
-//! V4.1's lane slots behind the native server: greedy draws, drafts off, one Mac.
-//! The load stays under 70% of RAM unless GLM_LOAD_LIMIT_GB opts past it, as GLM's does.
+//! V4.1 lane slots on the native server: greedy, drafts off; load under 70% RAM unless GLM_LOAD_LIMIT_GB opts past.
 const std = @import("std");
 const mtl = @import("metal");
 const api = @import("engine_api");
@@ -35,8 +34,7 @@ fn words(_: ?*anyopaque, err: anyerror) ?[]const u8 {
     };
 }
 
-/// The pull builds the token map; when it is missing but the original release's tokenizer
-/// and config sit beside the Engram tables, build it here so a load never needs the Python step.
+/// Build the missing token map from the release's tokenizer/config beside the Engram tables; loads need no Python step.
 fn ensureTokenMap(a: Allocator, io: std.Io, map: []const u8, table_dir: ?[]const u8) void {
     const src = table_dir orelse return;
     if (std.Io.Dir.cwd().openFile(io, map, .{})) |f| {

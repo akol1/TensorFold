@@ -1,6 +1,5 @@
-//! Builds the canonical Engram token map from the release tokenizer and typed configuration.
-
-// Algorithm: DeepSeek AI inference/engram.py, MIT; the pinned revision is retained in source below.
+//! The Engram token map builder's command line: tf-dsv41-token-map --tokenizer PATH --config PATH --output PATH,
+//! and the same build the lane host runs when the map is missing and the original's tokenizer sits beside the tables.
 const std = @import("std");
 const tok = @import("src/core/tokenizer/tokenizer.zig");
 const unicode = @import("src/core/tokenizer/unicode.zig");
@@ -10,6 +9,7 @@ const Layer = struct { layer_id: u64, rows: u64, primes: [24]u32, offsets: [24]u
 const magic = "DSENGR01";
 const source = "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/2cba9e42aa026125f3ed06c6d98c1db82f7ca027/inference/engram.py";
 
+/// The same build the lane host runs when the map is missing and the original's tokenizer sits beside the tables.
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     const paths = try parseArgs(args);

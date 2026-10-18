@@ -9,7 +9,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "zig" / "src" / "core" / "tokenizer" / "nfkd_data.zig"
 VERSION = "16.0.0"
-ZIG = "zig"
 
 
 def rows(values, per_line, fmt):
@@ -82,7 +81,7 @@ def formatted(text, zig):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="fail if the committed file differs")
-    parser.add_argument("--zig", default=ZIG, help="the Zig compiler whose formatter shapes the output")
+    parser.add_argument("--zig", default="zig", help="the Zig compiler whose formatter shapes the output")
     args = parser.parse_args()
     if unicodedata.unidata_version != VERSION:
         sys.exit("Python has Unicode %s; the Engram tables need %s" % (unicodedata.unidata_version, VERSION))

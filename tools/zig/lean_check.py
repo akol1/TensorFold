@@ -12,7 +12,7 @@ COMMENT = {".cl": re.compile(r"^\s*//"), ".c": re.compile(r"^\s*//"), ".hip": re
            ".sh": re.compile(r"^\s*#(?!!)")}
 BLOCK = re.compile(r"/\*")
 DOCSTRING = re.compile(r'^\s*(?:[rubf]{0,2})("""|\'\'\')')
-GENERATED = ("unicode_data.zig",)
+GENERATED = ("unicode_data.zig", "nfkd_data.zig")
 HEX_METAL = re.compile(r"_[0-9a-f]{16}\.metal$")
 # Generated outputs are skipped entirely. unicode_data.zig has only the length exemption.
 GENERATOR_OUTPUT = (

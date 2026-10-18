@@ -140,8 +140,7 @@ pub const flashnext_gen = @import("flashnext/sources_gen.zig");
 pub const packed_metallib = @import("nemotron_packed_metallib").bytes;
 /// The core lane projection (tensor units): every window row's sums in one weight read, and its row order.
 pub const core_expert_groups = @embedFile("core/expert_groups.metal");
-/// DeepSeek V4.1 Flash: Engram hashing and commit, sparse/compressed attention, the
-/// hyperconnection mix, routed experts, shared projections, the cache and rotary glue.
+/// DeepSeek V4.1 Flash: Engram hash/commit, CSA attention, mHC mix, routed experts, shared projections, cache/rotary.
 pub const deepseek_v41_engram = @embedFile("deepseek_v41/engram.metal");
 pub const deepseek_v41_ops = @embedFile("deepseek_v41/ops.metal");
 pub const deepseek_v41_mhc = @embedFile("deepseek_v41/mhc.metal");

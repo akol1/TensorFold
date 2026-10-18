@@ -1,5 +1,4 @@
-//! Family stage labels over the generic same-command-buffer counter recorder; labels are CPU-side
-//! bookkeeping only and never add a GPU readback, wait or allocation while profiling is disabled.
+//! Family stage labels over the generic counter recorder: CPU-side only, never a GPU readback, wait or allocation.
 const std = @import("std");
 const mtl = @import("metal");
 const counters = @import("../../../core/gpu_counters.zig");

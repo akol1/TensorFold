@@ -12,4 +12,5 @@ test {
     _ = @import("tests/deepseek_v41_reference/operator_csa2_sparse_fp64.zig");
     _ = @import("tests/deepseek_v41_reference/operator_csa2_rope_fp64.zig");
     _ = @import("tests/deepseek_v41_reference/operator_csa2_index_fp64.zig");
+    _ = @import("tests/deepseek_v41_reference/operator_engram_fp64.zig");
 }

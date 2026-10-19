@@ -6,6 +6,7 @@ test {
     _ = @import("src/families/deepseek_v41/metal/ops_check.zig");
     _ = @import("src/families/deepseek_v41/metal/load.zig");
     _ = @import("src/families/deepseek_v41/metal/index_precision_test.zig");
+    _ = @import("src/families/deepseek_v41/metal/index_select_test.zig");
     _ = @import("src/families/deepseek_v41/metal/config.zig");
     _ = @import("src/families/deepseek_v41/metal/profiler.zig");
     _ = @import("src/core/gpu_counters.zig");

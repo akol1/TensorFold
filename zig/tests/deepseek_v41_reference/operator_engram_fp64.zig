@@ -6,6 +6,7 @@ const math = @import("math.zig");
 
 const engram = tf.deepseek_v41_engram;
 const hash = tf.deepseek_v41_engram_hash;
+const contract = tf.contract;
 const View = engram.View;
 
 const dim: usize = 5120;
@@ -52,22 +53,25 @@ const Delta = struct {
     worst: usize = 0,
 };
 
-fn deltaBf16(actual: []const u16, ideal: []const u16) Delta {
+/// The cells' BF16 disagreement with an FP64 ideal; a non-finite value on either side is a failure, never a skip.
+fn deltaBf16(actual: []const u16, ideal: []const u16) !Delta {
     var d: Delta = .{ .cells = actual.len };
     var squared: f64 = 0;
     var magnitude: f64 = 0;
     for (actual, ideal, 0..) |a, want, i| {
         const ref: f64 = math.d64(want);
-        if (std.math.isFinite(ref)) magnitude += ref * ref;
-        if (a == want) continue;
         const got: f64 = math.d64(a);
+        if (!std.math.isFinite(ref) or !std.math.isFinite(got)) return error.NonFiniteMetric;
+        magnitude += ref * ref;
+        if (a == want) continue;
         const diff = got - ref;
+        if (!std.math.isFinite(diff)) return error.NonFiniteMetric;
         d.unequal += 1;
         if (@abs(diff) > d.max_abs) {
             d.max_abs = @abs(diff);
             d.worst = i;
         }
-        if (std.math.isFinite(diff)) squared += diff * diff;
+        squared += diff * diff;
     }
     d.nrms = if (magnitude == 0) @sqrt(squared) else @sqrt(squared / magnitude);
     return d;
@@ -79,6 +83,15 @@ fn printBf16(stage: []const u8, case_name: []const u8, d: Delta) void {
 
 fn printEq(stage: []const u8, case_name: []const u8, cells: usize, unequal: usize) void {
     std.debug.print("ENG64 {{\"stage\":\"{s}\",\"case\":\"{s}\",\"cells\":{d},\"metal_vs_contract_unequal\":{d}}}\n", .{ stage, case_name, cells, unequal });
+}
+
+/// The contract gate's per-cell verdict: how many cells passed their declared FP64 bound, and the closest call.
+fn printBound(stage: []const u8, case_name: []const u8, cells: usize, failures: usize, max_ratio: f64) void {
+    std.debug.print("ENG64 {{\"stage\":\"{s}\",\"case\":\"{s}\",\"cells\":{d},\"bound_failures\":{d},\"bound_max_ratio\":{d}}}\n", .{ stage, case_name, cells, failures, max_ratio });
+}
+
+fn printCell(check: []const u8, family: []const u8, token: usize, copy: usize, cell: usize, got: u16, oracle: u16, ideal: f64, diff: f64, allowed: f64) void {
+    std.debug.print("ENG64_CELL {{\"stage\":\"gate\",\"check\":\"{s}\",\"case\":\"{s}\",\"token\":{d},\"copy\":{d},\"cell\":{d},\"got\":{d},\"oracle\":{d},\"ideal\":{d},\"diff\":{d},\"bound\":{d}}}\n", .{ check, family, token, copy, cell, got, oracle, ideal, diff, allowed });
 }
 
 fn view(buffer: mtl.Buffer) View {
@@ -148,6 +161,62 @@ fn idealGate(hidden: []const u16, kv: []const u16, q: []const f32, k: []const f3
     for (0..dim) |d| {
         const at = copy * dim + d;
         out[d] = math.b64(math.d64(hidden[at]) + gate * math.d64(kv[hidden_width + d]));
+    }
+}
+
+/// The gate's kernel-contract registration: FP32 sums over the 5120-wide keys and a BF16 output.
+const gate_shape = contract.Shape{ .rows = gate_tokens, .n = hidden_width, .k = dim };
+
+/// The sums' longest chain: a thread's serial adds over the keys, the two simd_sum trees, the term's products.
+fn gateDepth(shape: contract.Shape) usize {
+    return (shape.k + 255) / 256 + 8 + 3;
+}
+
+/// The fp32 roundings after the sums: means, rsqrts, dot scales, sqrt, exp, sigmoid, gate, add.
+const gate_spec = contract.Spec{
+    .name = "engram_gate",
+    .accum = .f32,
+    .depth = gateDepth,
+    .ops = 18,
+    .out = .bf16,
+    .served = &.{gate_shape},
+};
+
+/// A cell's FP64 value and the magnitude its sums and gate can move it by, in the contract's bound.
+const GateWide = struct { want: [dim]f64, mag: [dim]f64 };
+
+/// idealGate's values per cell plus the magnitude the sums and the gate can move them by, for contract.bound.
+fn idealGateWide(hidden: []const u16, kv: []const u16, q: []const f32, k: []const f32, copy: usize, wide: *GateWide) void {
+    @setFloatMode(.strict);
+    var hh: f64 = 0;
+    var kk: f64 = 0;
+    var dot: f64 = 0;
+    var dot_mag: f64 = 0;
+    for (0..dim) |d| {
+        const at = copy * dim + d;
+        const h = math.d64(hidden[at]);
+        const x = math.d64(kv[at]);
+        const weight = @as(f64, q[at]) * @as(f64, k[at]);
+        hh += h * h;
+        kk += x * x;
+        dot += (h * weight) * x;
+        dot_mag += @abs((h * weight) * x);
+    }
+    const mean_h = hh / @as(f64, dim) + @as(f64, eps);
+    const mean_k = kk / @as(f64, dim) + @as(f64, eps);
+    const rstd = 1 / @sqrt(mean_h) / @sqrt(mean_k);
+    const dot_n = (dot * rstd) / @sqrt(@as(f64, dim));
+    const abs_dot = @max(@abs(dot_n), 1e-6);
+    const root = std.math.copysign(@sqrt(abs_dot), dot_n);
+    const gate = 1 / (1 + @exp(-root));
+    const slope = if (@abs(dot_n) > 1e-6) 0.25 / (2 * @sqrt(abs_dot)) else 0;
+    const spread = (rstd / @sqrt(@as(f64, dim))) * dot_mag + @abs(dot_n);
+    for (0..dim) |d| {
+        const at = copy * dim + d;
+        const h = math.d64(hidden[at]);
+        const v = math.d64(kv[hidden_width + d]);
+        wide.want[d] = h + gate * v;
+        wide.mag[d] = @abs(h) + gate * @abs(v) + @abs(v) * slope * spread;
     }
 }
 
@@ -238,7 +307,7 @@ test "Engram gather narrows the E4M3 row grid to BF16 exactly like the FP32 cont
     var weight_bytes: [table_rows * head_dim]u8 = undefined;
     var scale_bytes: [table_rows * (head_dim / 32)]u8 = undefined;
     for (&weight_bytes) |*b| b.* = @intCast(lcg.below(127));
-    for (&scale_bytes) |*b| b.* = @intCast(lcg.below(255));
+    for (&scale_bytes) |*b| b.* = @intCast(lcg.below(240));
     const weight = try device.buffer(weight_bytes.len, 0);
     defer weight.deinit();
     @memcpy(weight.slice(u8, weight_bytes.len), &weight_bytes);
@@ -257,7 +326,7 @@ test "Engram gather narrows the E4M3 row grid to BF16 exactly like the FP32 cont
     e.end();
     try completed(cb);
     const got = gathered.slice(u16, gather_tokens * gather_dim);
-    var contract: [gather_tokens * gather_dim]u16 = undefined;
+    var oracle: [gather_tokens * gather_dim]u16 = undefined;
     var ideal: [gather_tokens * gather_dim]u16 = undefined;
     for (0..gather_tokens) |t| {
         for (0..hash.columns) |col| {
@@ -265,19 +334,49 @@ test "Engram gather narrows the E4M3 row grid to BF16 exactly like the FP32 cont
                 const row: usize = row_slice[t * hash.columns + col];
                 const code = weight_bytes[row * head_dim + d];
                 const block = scale_bytes[row * (head_dim / 32) + d / 32];
-                contract[t * gather_dim + col * head_dim + d] = contractProduct(math.e4(code), math.e8(block));
+                oracle[t * gather_dim + col * head_dim + d] = contractProduct(math.e4(code), math.e8(block));
                 ideal[t * gather_dim + col * head_dim + d] = math.b64(@as(f64, math.e4(code)) * @as(f64, math.e8(block)));
             }
         }
     }
     var unequal: usize = 0;
-    for (got, contract[0..]) |a, want| {
+    for (got, oracle[0..]) |a, want| {
         if (a != want) unequal += 1;
     }
     try std.testing.expectEqual(@as(usize, 0), unequal);
     printEq("gather", "fp8-row-grid", got.len, unequal);
-    printBf16("gather", "metal-vs-fp64-ideal", deltaBf16(got, &ideal));
-    printBf16("gather", "fp32-contract-vs-fp64-ideal", deltaBf16(&contract, &ideal));
+    printBf16("gather", "metal-vs-fp64-ideal", try deltaBf16(got, &ideal));
+    printBf16("gather", "fp32-contract-vs-fp64-ideal", try deltaBf16(&oracle, &ideal));
+    const row_bytes = head_dim + head_dim / 32;
+    const rows = try device.buffer(table_rows * row_bytes, 0);
+    defer rows.deinit();
+    const row_data = rows.slice(u8, table_rows * row_bytes);
+    for (0..table_rows) |row| {
+        @memcpy(row_data[row * row_bytes ..][0..head_dim], weight_bytes[row * head_dim ..][0..head_dim]);
+        @memcpy(row_data[row * row_bytes + head_dim ..][0 .. head_dim / 32], scale_bytes[row * (head_dim / 32) ..][0 .. head_dim / 32]);
+    }
+    const row_gather = try device.buffer(gather_tokens * gather_dim * 2, 0);
+    defer row_gather.deinit();
+    const table = engram.Table{
+        .weight = view(rows),
+        .scale = view(rows).shifted(head_dim),
+        .rows = @intCast(table_rows),
+        .weight_stride_bytes = row_bytes,
+        .scale_stride_bytes = row_bytes,
+    };
+    const row_cb = queue.commandBuffer();
+    const row_e = row_cb.compute(.serial);
+    try engram.encodeGather(row_e, &pipelines, table, view(row_ids), view(row_gather), @intCast(gather_tokens), gather_dim);
+    row_e.end();
+    try completed(row_cb);
+    const row_got = row_gather.slice(u16, gather_tokens * gather_dim);
+    var row_unequal: usize = 0;
+    for (row_got, oracle[0..]) |a, want| {
+        if (a != want) row_unequal += 1;
+    }
+    printEq("gather", "fp8-interleaved-264-byte-rows", row_got.len, row_unequal);
+    try std.testing.expectEqual(@as(usize, 0), row_unequal);
+    printBf16("gather", "interleaved-metal-vs-fp64-ideal", try deltaBf16(row_got, &ideal));
 }
 
 test "Engram gate reaches BF16 at the FP32 contract over matching equations" {
@@ -300,6 +399,7 @@ test "Engram gate reaches BF16 at the FP32 contract over matching equations" {
     var kv: [gate_tokens * kv_width]u16 = undefined;
     var ideal_row: [gate_tokens * hidden_width]u16 = undefined;
     var contract_block: [dim]u16 = undefined;
+    var wide: GateWide = undefined;
     const q_weight = try device.buffer(hidden_width * 4, 0);
     defer q_weight.deinit();
     @memcpy(q_weight.slice(f32, hidden_width), &q);
@@ -327,7 +427,11 @@ test "Engram gate reaches BF16 at the FP32 contract over matching equations" {
         .output_stride = hidden_width,
         .eps = eps,
     };
-    var contract_unequal: usize = 0;
+    var cells_total: usize = 0;
+    var unequal_total: usize = 0;
+    var failures_total: usize = 0;
+    var ratio_max: f64 = 0;
+    var shown: usize = 0;
     for (family_names, 0..) |family, index| {
         for (&hidden, 0..) |*v, i| v.* = sampleBf16(&lcg, index, i);
         for (&kv, 0..) |*v, i| v.* = sampleBf16(&lcg, index, i + 7);
@@ -339,21 +443,53 @@ test "Engram gate reaches BF16 at the FP32 contract over matching equations" {
         e.end();
         try completed(cb);
         const got = output.slice(u16, gate_tokens * hidden_width);
+        var unequal: usize = 0;
+        var failures: usize = 0;
+        var ratio: f64 = 0;
         for (0..gate_tokens) |t| {
             for (0..copies) |copy| {
                 const hidden_row = hidden[t * hidden_width ..][0..hidden_width];
                 const kv_row = kv[t * kv_width ..][0..kv_width];
                 contractGate(hidden_row, kv_row, &q, &k, copy, &contract_block);
                 idealGate(hidden_row, kv_row, &q, &k, copy, ideal_row[t * hidden_width + copy * dim ..][0..dim]);
+                idealGateWide(hidden_row, kv_row, &q, &k, copy, &wide);
                 for (0..dim) |d| {
                     const at = t * hidden_width + copy * dim + d;
-                    if (got[at] != contract_block[d]) contract_unequal += 1;
+                    const want = wide.want[d];
+                    const allowed = contract.bound(gate_spec, gate_shape, want, wide.mag[d]);
+                    const got_value = math.d64(got[at]);
+                    if (!std.math.isFinite(got_value) or !std.math.isFinite(want) or !std.math.isFinite(allowed)) return error.NonFiniteMetric;
+                    const diff = got_value - want;
+                    if (@abs(diff) / allowed > ratio) ratio = @abs(diff) / allowed;
+                    if (got[at] != contract_block[d]) {
+                        unequal += 1;
+                        if (shown < 8) {
+                            printCell("metal-vs-contract", family, t, copy, at, got[at], contract_block[d], want, diff, allowed);
+                            shown += 1;
+                        }
+                    }
+                    if (@abs(diff) > allowed) {
+                        failures += 1;
+                        if (shown < 8) {
+                            printCell("contract-bound", family, t, copy, at, got[at], contract_block[d], want, diff, allowed);
+                            shown += 1;
+                        }
+                    }
                 }
             }
         }
-        printBf16("gate", family, deltaBf16(got, &ideal_row));
+        printEq("gate", family, gate_tokens * hidden_width, unequal);
+        printBf16("gate-ideal", family, try deltaBf16(got, &ideal_row));
+        printBound("gate-bound", family, gate_tokens * hidden_width, failures, ratio);
+        cells_total += gate_tokens * hidden_width;
+        unequal_total += unequal;
+        failures_total += failures;
+        if (ratio > ratio_max) ratio_max = ratio;
+        try std.testing.expectEqual(@as(usize, 0), failures);
     }
-    try std.testing.expect(contract_unequal <= (gate_tokens * hidden_width) / 100);
+    printEq("gate", "all-families-metal-vs-contract", cells_total, unequal_total);
+    printBound("gate-bound", "all-families", cells_total, failures_total, ratio_max);
+    try std.testing.expectEqual(@as(usize, 0), failures_total);
     const cb = queue.commandBuffer();
     const e = cb.compute(.serial);
     try engram.encodeGate(e, &pipelines, gate, view(hidden_buffer), view(kv_buffer), view(gate_mask), view(masked_output), @intCast(gate_tokens));
@@ -361,5 +497,5 @@ test "Engram gate reaches BF16 at the FP32 contract over matching equations" {
     try completed(cb);
     const masked = masked_output.slice(u16, gate_tokens * hidden_width);
     try std.testing.expectEqualSlices(u16, hidden[hidden_width..][0..hidden_width], masked[hidden_width..][0..hidden_width]);
-    printEq("gate", "all-families-metal-vs-contract", gate_tokens * hidden_width, contract_unequal);
+    printEq("gate", "dead-mask-zero-gate", hidden_width, 0);
 }

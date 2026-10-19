@@ -498,3 +498,38 @@ test "attention reference capacity rejects unbounded history before allocation" 
     try std.testing.expectError(error.InvalidAttentionReferenceCapacity, State.init(std.testing.allocator, 0));
     try std.testing.expectError(error.InvalidAttentionReferenceCapacity, State.init(std.testing.allocator, max_capacity + 1));
 }
+
+test "frozen FP32 pooling and sparse-head boundaries match the pre-repair oracle" {
+    // Frozen at 53b790082 (pre-repair): poolOf and this head's value GEMM are FP32, so both words stay.
+    const a_values = [_]f32{
+        1,        1 + 0x1p-7, 1,      -1,       0, 0x1p-24, 1 - 0x1p-7, 3 * 0x1p-125,
+        0x1p-126, 0x1p126,    0x1p-8, -0x1p-24, 1, 0x1p-7,  1.5,        2,
+    };
+    const b_values = [_]f32{
+        1 + 0x1p-7, 1 + 0x1p-6, 3,      -1 - 0x1p-7,  0,  3 * 0x1p-24, 1 - 0x1p-6, 5 * 0x1p-125,
+        0x1p-126,   0x1p126,    0x1p-8, -3 * 0x1p-24, -1, 3 * 0x1p-7,  2.5,        2,
+    };
+    // Equal gates give exact 1/2 probabilities; equal scores give the sparse rows 1, with a -inf sink.
+    var window: [2 * 512]u16 = @splat(0);
+    var kv: [2][512]f32 = undefined;
+    for (0..512) |d| {
+        const column = d % a_values.len;
+        window[d] = m.b(a_values[column]);
+        window[512 + d] = m.b(b_values[column]);
+        kv[0][d] = m.f(window[d]);
+        kv[1][d] = m.f(window[512 + d]);
+    }
+    var gates: [2][512]f32 = .{ @splat(0), @splat(0) };
+    var pooled: [512]u16 = undefined;
+    poolOf(f32, .{ &kv[0], &kv[1] }, .{ &gates[0], &gates[1] }, &pooled);
+    var q: [512]u16 = @splat(0);
+    var indices = [2]i32{ 0, 1 };
+    var sparse: [512]u16 = @splat(0);
+    sparseHeadPre(f32, &q, .{ .window = &window, .window_stride = 512 }, &indices, -std.math.inf(f32), &sparse, null);
+    try std.testing.expectEqualSlices(u16, &pooled, &sparse);
+    const frozen = [_]u16{
+        0x3f80, 0x3f82, 0x4000, 0xbf80, 0x0000, 0x3400, 0x3f7d, 0x0200,
+        0x0080, 0x7e80, 0x3b80, 0xb400, 0x0000, 0x3c80, 0x4000, 0x4000,
+    };
+    try std.testing.expectEqualSlices(u16, &frozen, pooled[0..16]);
+}

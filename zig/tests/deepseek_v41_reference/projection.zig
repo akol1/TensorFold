@@ -326,3 +326,38 @@ test "FP32 Hadamard then FP16 and BF16 boundaries are deterministic" {
     try std.testing.expectEqual(@as(u16, 0x3f82), f32m.bf16(@bitCast(@as(u32, 0x3f818000))));
     try std.testing.expectEqual(@as(u16, 0x7fc0), f32m.bf16(@bitCast(@as(u32, 0x7f800001))));
 }
+
+test "frozen FP32 rotation and output boundaries match the pre-repair oracle" {
+    // Frozen at 53b790082 (pre-repair): prepare, Hadamard and output narrowing are FP32, so words stay.
+    const f32m = Module(f32);
+    const inputs = [_]f32{ 1, -1, 0x1p-24, 1 + 0x1p-7, 0x1.8p-24, -0x1p-7, 0x1p-8, 1 - 0x1p-7 };
+    var x: [block_size]u16 = undefined;
+    for (&x, 0..) |*word, i| word.* = f32m.bf16(inputs[i % inputs.len]);
+    var signs: [16]u8 = @splat(0);
+    for (0..block_size) |i| {
+        if (i % 3 == 1) signs[i / 16] |= @as(u8, 1) << @intCast(i % 16);
+    }
+    var rotated: [block_size]f64 = undefined;
+    f32m.prepare(&x, &signs, .packed_signs, &rotated);
+    var rotation: [block_size]u16 = undefined;
+    for (&rotation, rotated) |*word, value| word.* = @bitCast(@as(f16, @floatCast(value)));
+    // The finish output stage: widen the rotation, seven butterflies, the inverse and column scale, BF16.
+    var values: [block_size]f32 = undefined;
+    for (&values, rotation) |*value, word| value.* = @floatCast(@as(f16, @bitCast(word)));
+    f32m.hadamard(&values);
+    var narrowed: [block_size]u16 = undefined;
+    for (&narrowed, values, 0..) |*word, value, i| {
+        const column_scale: f16 = if (i % 2 == 0) 1 else 1 + 0x1p-7;
+        word.* = f32m.bf16((value * f32m.wr(inverse)) * @as(f32, @floatCast(column_scale)));
+    }
+    const frozen_rotation = [_]u16{
+        0x3c3d, 0x1cf3, 0xb9b8, 0x3f16, 0x35cd, 0x398d, 0x91a8, 0x3c43,
+        0x35b6, 0x983e, 0x91a8, 0x35a5, 0x35a5, 0x91a8, 0x983e, 0x35b6,
+    };
+    const frozen_narrowed = [_]u16{
+        0x3f80, 0x3f81, 0xb982, 0x3f82, 0x3913, 0x3c02, 0x3b84, 0xbf80,
+        0xbf80, 0x3f81, 0xb982, 0xbf82, 0x3913, 0xbc04, 0xbb82, 0xbf80,
+    };
+    try std.testing.expectEqualSlices(u16, &frozen_rotation, rotation[0..16]);
+    try std.testing.expectEqualSlices(u16, &frozen_narrowed, narrowed[0..16]);
+}

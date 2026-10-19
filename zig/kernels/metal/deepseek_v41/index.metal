@@ -246,6 +246,7 @@ inline void dsv41_sort_group(device Dsv41Pick *p, uint size, uint t, threadgroup
 kernel void dsv41_index_finish(device Dsv41Pick *top [[buffer(0)]], device Dsv41Pick *candidate [[buffer(1)]],
     device int *positions [[buffer(2)]], constant Dsv41Index &p [[buffer(3)]],
     uint row [[threadgroup_position_in_grid]], uint t [[thread_position_in_threadgroup]]) {
+    // 2,048 picks: 16 KB a threadgroup, allocated at launch whether or not this row runs; gate 5 registers it.
     threadgroup Dsv41Pick tmp[2048];
     if (row >= p.rows) return;
     dsv41_sort_group(top + row * p.topk, p.topk, t, tmp);

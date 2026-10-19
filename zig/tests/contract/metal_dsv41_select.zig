@@ -3,6 +3,7 @@ const std = @import("std");
 const mtl = @import("metal");
 const contract = @import("contract");
 const sources = @import("kernel_sources");
+const tf = @import("tensorfold");
 const rig_ = @import("rig.zig");
 
 const c = contract.spec;
@@ -189,7 +190,7 @@ pub const Select = struct {
         }
         p.e.setValue(t.args(), 3);
         const rows: u32 = @intCast(t.shape.rows);
-        if (serial) p.e.dispatchThreads(mtl.Size.of(rows, 1, 1), mtl.Size.of(1, 1, 1)) else p.e.dispatchGroups(mtl.Size.of(rows, 1, 1), mtl.Size.of(1024, 1, 1));
+        if (serial) p.e.dispatchThreads(mtl.Size.of(rows, 1, 1), mtl.Size.of(1, 1, 1)) else p.e.dispatchGroups(mtl.Size.of(rows, 1, 1), mtl.Size.of(tf.deepseek_v41_index.select_threads, 1, 1));
         try t.rig.finish(p);
     }
 
@@ -255,6 +256,8 @@ pub const Select = struct {
                 return try std.fmt.bufPrint(&t.msg, "row {d}: the held picks differ from the oracle's", .{row});
             if (!t.finish and !std.mem.eql(u8, std.mem.sliceAsBytes(want_cand), std.mem.sliceAsBytes(got_cand)))
                 return try std.fmt.bufPrint(&t.msg, "row {d}: the candidate blocks differ from the oracle's", .{row});
+            if (t.finish and !std.mem.eql(u8, std.mem.sliceAsBytes(want_cand), std.mem.sliceAsBytes(got_cand)))
+                return try std.fmt.bufPrint(&t.msg, "row {d}: the candidate blocks out of position order", .{row});
             if (t.finish) {
                 const pos = std.mem.bytesAsSlice(i32, t.rig.bytes(t.refs[3], t.shape.rows * topk * 4))[row * topk ..][0..topk];
                 for (pos, top[row * topk ..][0..topk]) |p, h| if (p != h.position) return try std.fmt.bufPrint(&t.msg, "row {d}: positions out of step with the sorted picks", .{row});

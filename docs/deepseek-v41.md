@@ -64,6 +64,21 @@ exact BF16 tie at every indexed layer past the window fill — so pick order the
 decided by sub-quantum noise, folded into the sensitivity accounting. The 1% absolute
 gate stays a trip-wire next to argmax agreement, which held at every width.
 
+## The dual-width oracle
+
+`oracle-precision` runs the FP32 and FP64 oracles on the same checkpoint bytes and the
+same tokens with the GPU out of the loop, and keeps both logit vectors:
+
+```sh
+zig build tf-dsv41-run && ./zig-out/bin/tf-dsv41-run oracle-precision \
+  <pack> <orig> ids.json <out>
+```
+
+It reports the NRMS between the two widths, the FP32 and FP64 argmax per token, and
+both wall times; the window is capped at 16 tokens, one teacher step. The same run
+prints the residency receipt, so a page touched from disk during execution is visible
+in the artifact rather than inferred from wall time.
+
 ## Receipts
 
 The qualification receipts — the served parity legs, the lane bit-equality, the oracle

@@ -8,6 +8,7 @@ const load = tf.deepseek_v41_load;
 const weights = tf.deepseek_v41_weights;
 const process_memory = @import("src/server/process_memory.zig");
 const oracle = @import("tests/deepseek_v41_reference/qualify.zig");
+const precision = @import("tests/deepseek_v41_reference/precision.zig");
 const margins = @import("tests/deepseek_v41_reference/margins.zig");
 const profile = @import("tests/deepseek_v41_reference/profile.zig");
 const trace = @import("tests/deepseek_v41_reference/trace.zig");
@@ -22,6 +23,7 @@ fn usage(code: u8) noreturn {
         "       tf-dsv41-run teacher MODEL TABLES IDS_JSON OUT_DIR [CHUNK]\n" ++
         "       tf-dsv41-run seams MODEL TABLES IDS_JSON OUT_DIR\n" ++
         "       tf-dsv41-run oracle MODEL TABLES IDS_JSON OUT_DIR\n" ++
+        "       tf-dsv41-run oracle-precision MODEL TABLES IDS_JSON OUT_DIR\n" ++
         "       tf-dsv41-run margins MODEL TABLES IDS_JSON OUT_DIR [DEEP]\n" ++
         "       tf-dsv41-run profile MODEL TABLES IDS_JSON OUT_DIR\n" ++
         "       tf-dsv41-run trace MODEL TABLES IDS_JSON OUT_DIR\n" ++
@@ -33,7 +35,7 @@ fn usage(code: u8) noreturn {
         "       tf-dsv41-run generate MODEL TABLES IDS_JSON OUT_DIR [TOKENS]\n" ++
         "       tf-dsv41-run lanes MODEL TABLES IDS_JSON OUT_DIR [CHUNK] [CONTEXT]\n" ++
         "IDS_JSON: nonempty JSON array of token IDs below 129280.\n" ++
-        "Limits: oracle/trace 16 IDs; profile 256 IDs; teacher/seams/lanes 4096 IDs.\n" ++
+        "Limits: oracle/oracle-precision/trace 16 IDs; profile 256 IDs; teacher/seams/lanes 4096 IDs.\n" ++
         "History: TOKEN below 4096; retained normalized prefix at most 256 MiB.\n" ++
         "Local diagnostics do not qualify the model. Oracle retains the independent 1% NRMS gate.\n", .{});
     std.process.exit(code);
@@ -50,7 +52,7 @@ fn validArguments(args: []const [:0]const u8) bool {
     for ([_][]const u8{ "teacher", "generate", "attention-sameinput", "hc-sameinput", "moe-sameinput", "margins" }) |name|
         if (std.mem.eql(u8, mode, name)) return args.len == 6 or args.len == 7;
     if (std.mem.eql(u8, mode, "lanes")) return args.len == 6 or args.len == 7 or args.len == 8;
-    for ([_][]const u8{ "seams", "oracle", "profile", "trace" }) |name|
+    for ([_][]const u8{ "seams", "oracle", "oracle-precision", "profile", "trace" }) |name|
         if (std.mem.eql(u8, mode, name)) return args.len == 6;
     return false;
 }
@@ -65,6 +67,15 @@ test "lanes takes its optional chunk and context arguments" {
     try std.testing.expect(validArguments(&eight));
     try std.testing.expect(!validArguments(&five));
     try std.testing.expect(!validArguments(&nine));
+}
+
+test "oracle-precision takes exactly the five mode arguments" {
+    const six = [_][:0]const u8{ "tf-dsv41-run", "oracle-precision", "model", "tables", "ids.json", "out" };
+    const five = [_][:0]const u8{ "tf-dsv41-run", "oracle-precision", "model", "tables", "ids.json" };
+    const seven = [_][:0]const u8{ "tf-dsv41-run", "oracle-precision", "model", "tables", "ids.json", "out", "16" };
+    try std.testing.expect(validArguments(&six));
+    try std.testing.expect(!validArguments(&five));
+    try std.testing.expect(!validArguments(&seven));
 }
 
 fn argmax(row: []const f32) !u32 {
@@ -198,18 +209,19 @@ pub fn main(init: std.process.Init) !void {
     const is_hc = std.mem.eql(u8, mode, "hc-sameinput");
     const is_moe = std.mem.eql(u8, mode, "moe-sameinput");
     const is_lanes = std.mem.eql(u8, mode, "lanes");
-    const max_ids: usize = if (std.mem.eql(u8, mode, "margins")) 1048576 else if (std.mem.eql(u8, mode, "oracle") or std.mem.eql(u8, mode, "trace")) 16 else if (std.mem.eql(u8, mode, "profile")) ds.prefill_step else if (std.mem.eql(u8, mode, "teacher") or std.mem.eql(u8, mode, "seams") or is_lanes) 4096 else 1048576;
+    const max_ids: usize = if (std.mem.eql(u8, mode, "margins")) 1048576 else if (std.mem.eql(u8, mode, "oracle") or std.mem.eql(u8, mode, "oracle-precision") or std.mem.eql(u8, mode, "trace")) 16 else if (std.mem.eql(u8, mode, "profile")) ds.prefill_step else if (std.mem.eql(u8, mode, "teacher") or std.mem.eql(u8, mode, "seams") or is_lanes) 4096 else 1048576;
     const input = if (is_operators or is_attention or is_attention_history or is_hc or is_moe) &.{} else try std.Io.Dir.cwd().readFileAlloc(io, args[4], arena, .limited(max_ids * 12 + 2));
     const ids: []const u32 = if (is_operators or is_attention or is_attention_history or is_hc or is_moe) &.{} else try std.json.parseFromSliceLeaky([]const u32, arena, input, .{});
     if (!is_operators and !is_attention and !is_attention_history and !is_hc and !is_moe and (ids.len == 0 or ids.len > 1048576)) return error.InvalidPrompt;
     if (ids.len > max_ids) return error.InvalidPrompt;
     for (ids) |id| if (id >= 129280) return error.InvalidToken;
     const is_oracle = std.mem.eql(u8, mode, "oracle");
+    const is_precision = std.mem.eql(u8, mode, "oracle-precision");
     const is_trace = std.mem.eql(u8, mode, "trace");
     const dir = args[if (is_operators) @as(usize, 4) else 5];
     try std.Io.Dir.cwd().createDirPath(io, dir);
     const map = try std.fs.path.join(arena, &.{ args[2], "engram-token-map.bin" });
-    const map_blob = if (is_oracle or is_trace)
+    const map_blob = if (is_oracle or is_trace or is_precision)
         try std.Io.Dir.cwd().readFileAlloc(io, map, arena, .limited(2 << 20))
     else
         &.{};
@@ -267,6 +279,7 @@ fn execute(a: std.mem.Allocator, io: std.Io, model: *ds.Model, args: []const [:0
     const is_hc = std.mem.eql(u8, mode, "hc-sameinput");
     const is_moe = std.mem.eql(u8, mode, "moe-sameinput");
     const is_oracle = std.mem.eql(u8, mode, "oracle");
+    const is_precision = std.mem.eql(u8, mode, "oracle-precision");
     const is_profile = std.mem.eql(u8, mode, "profile");
     const is_trace = std.mem.eql(u8, mode, "trace");
     const is_teacher = std.mem.eql(u8, mode, "teacher");
@@ -287,6 +300,19 @@ fn execute(a: std.mem.Allocator, io: std.Io, model: *ds.Model, args: []const [:0
         _ = try oracle.run(a, io, model, ids, map_blob, dir);
     } else if (std.mem.eql(u8, mode, "margins")) {
         try margins.run(a, io, model, ids, dir, if (args.len > 6) try number(args[6]) else 1536);
+    } else if (is_precision) {
+        const run = try precision.run(a, model, ids, map_blob);
+        defer run.logits.deinit(a);
+        // Capture execution before the diagnostics and artifacts below, not the reads they cause.
+        execution_after.* = try counters();
+        for (run.logits.argmax, 0..) |pair, i|
+            std.debug.print("precision token {d}/{d}: fp32 argmax={d}, fp64 argmax={d}\n", .{ i + 1, run.logits.argmax.len, pair[0], pair[1] });
+        const json = try std.json.Stringify.valueAlloc(a, run.result, .{});
+        defer a.free(json);
+        std.debug.print("{s}\n", .{json});
+        try write(io, a, dir, "precision-fp32-vs-fp64.json", json);
+        try write(io, a, dir, "reference-fp32-logits.f32", std.mem.sliceAsBytes(run.logits.fp32));
+        try write(io, a, dir, "reference-fp64-logits.f64", std.mem.sliceAsBytes(run.logits.fp64));
     } else if (is_profile) {
         try profile.run(a, io, model, ids, dir);
     } else if (is_lanes) {

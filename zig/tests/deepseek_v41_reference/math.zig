@@ -27,8 +27,7 @@ pub fn Module(comptime Real: type) type {
             const bits: u64 = @bitCast(x);
             const sign: u16 = @as(u16, @truncate(bits >> 63)) << 15;
             const magnitude: u64 = bits & 0x7fff_ffffffffffff;
-            if (magnitude > 0x7ff0_0000_0000_0000)
-                return sign | @as(u16, @truncate(((bits >> 49) | 0x0040) & 0xffff));
+            if (magnitude > 0x7ff0_0000_0000_0000) return sign | 0x7fc0;
             if (magnitude == 0x7ff0_0000_0000_0000) return sign | 0x7f80;
             const biased: u11 = @truncate(magnitude >> 52);
             const biased_wide: i32 = @intCast(biased);
@@ -452,4 +451,113 @@ test "CUDA mean projection preserves the BF16 RMS affine tie" {
     const gamma: f32 = @bitCast(@as(u32, 0x3c65de29));
     const inverse = idealRsqrt(meanFromWide(9, 5120) + @as(f32, 1e-20));
     try std.testing.expectEqual(b(1), b((@as(f32, 3) * inverse) * gamma));
+}
+
+test "FP64 narrowing keeps every IEEE class, including quiet NaN" {
+    const R64 = Module(f64);
+    // Raw FP64 class boundaries: NaN collapses to the canonical quiet NaN of its sign, never a finite word.
+    const classes = [_]struct { bits: u64, expected: u16 }{
+        .{ .bits = 0x7ff0000000000001, .expected = 0x7fc0 }, // signalling NaN, positive
+        .{ .bits = 0x7ff8000000000000, .expected = 0x7fc0 }, // quiet NaN, positive
+        .{ .bits = 0x7fffffffffffffff, .expected = 0x7fc0 }, // all-payload NaN, positive
+        .{ .bits = 0xfff0000000000001, .expected = 0xffc0 }, // signalling NaN, negative
+        .{ .bits = 0xfff8000000000000, .expected = 0xffc0 }, // quiet NaN, negative
+        .{ .bits = 0xffffffffffffffff, .expected = 0xffc0 }, // all-payload NaN, negative
+        .{ .bits = 0x7ff0000000000000, .expected = 0x7f80 }, // +infinity
+        .{ .bits = 0xfff0000000000000, .expected = 0xff80 }, // -infinity
+        .{ .bits = 0x0000000000000000, .expected = 0x0000 }, // +0
+        .{ .bits = 0x8000000000000000, .expected = 0x8000 }, // -0
+        .{ .bits = 0x7fefffffffffffff, .expected = 0x7f80 }, // largest finite FP64 overflows
+        .{ .bits = 0xffefffffffffffff, .expected = 0xff80 },
+        .{ .bits = 0x0000000000000001, .expected = 0x0000 }, // smallest FP64 subnormal underflows
+        .{ .bits = 0x000fffffffffffff, .expected = 0x0000 }, // largest FP64 subnormal underflows
+        .{ .bits = 0x8000000000000001, .expected = 0x8000 },
+    };
+    for (classes) |entry| {
+        const raw: f64 = @bitCast(entry.bits);
+        try std.testing.expectEqual(entry.expected, R64.b(raw));
+        if (entry.expected == 0x7fc0 or entry.expected == 0xffc0) {
+            try std.testing.expect(std.math.isNan(R64.f(R64.b(raw))));
+        }
+    }
+    // The FP32 branch is the reference: every FP32-representable finite value and NaN payload must agree.
+    try std.testing.expectEqual(@as(u16, 0x7fc0), b(@bitCast(@as(u32, 0x7f800001))));
+}
+
+test "FP64 narrows BF16 subnormal and overflow ties like the FP32 branch" {
+    const R64 = Module(f64);
+    // Values on the exact BF16 half-ULP grid: each is exact in FP32, so both branches return one word.
+    const ties = [_]struct { bits: u64, expected: u16 }{
+        .{ .bits = 0x37a0000000000000, .expected = 0x0001 }, // 2^-133, one BF16 subnormal unit
+        .{ .bits = 0x3790000000000000, .expected = 0x0000 }, // 2^-134, half a unit ties to even zero
+        .{ .bits = 0x37a8000000000000, .expected = 0x0002 }, // 1.5*2^-133 ties to even 2
+        .{ .bits = 0x37b4000000000000, .expected = 0x0002 }, // 2.5*2^-133 ties to even 2
+        .{ .bits = 0x37bc000000000000, .expected = 0x0004 }, // 3.5*2^-133 ties to even 4
+        .{ .bits = 0x3780000000000000, .expected = 0x0000 }, // 2^-135 underflows
+        .{ .bits = 0x380fc00000000000, .expected = 0x007f }, // largest BF16 subnormal
+        .{ .bits = 0x380fe00000000000, .expected = 0x0080 }, // half-ULP below the smallest normal rounds up
+        .{ .bits = 0x380fdffe00000000, .expected = 0x007f }, // just below that half-ULP stays subnormal
+        .{ .bits = 0x36a0000000000000, .expected = 0x0000 }, // 2^-149, smallest FP32 subnormal
+        .{ .bits = 0x3690000000000000, .expected = 0x0000 }, // 2^-150 has no FP32 peer
+        .{ .bits = 0xb7a0000000000000, .expected = 0x8001 },
+        .{ .bits = 0xb790000000000000, .expected = 0x8000 },
+        .{ .bits = 0x47efe00000000000, .expected = 0x7f7f }, // largest BF16 finite
+        .{ .bits = 0x47eff00000000000, .expected = 0x7f80 }, // half-ULP to infinity rounds up
+        .{ .bits = 0x47f0000000000000, .expected = 0x7f80 }, // 2^128 has no FP32 peer
+    };
+    for (ties) |entry| {
+        const raw: f64 = @bitCast(entry.bits);
+        try std.testing.expectEqual(entry.expected, R64.b(raw));
+    }
+    // Adjacent grid points that are exactly representable on both sides stay on the same word.
+    const parity = [_]struct { bits: u64, expected: u16 }{
+        .{ .bits = 0x3ff0000000000000, .expected = 0x3f80 }, // 1
+        .{ .bits = 0x3ff0100000000000, .expected = 0x3f80 }, // 1+2^-8 ties to even 1
+        .{ .bits = 0x3ff0200000000000, .expected = 0x3f81 }, // 1+2^-7
+        .{ .bits = 0x3ff0300000000000, .expected = 0x3f82 }, // 1+3*2^-8 ties to even 2
+        .{ .bits = 0x47efffffe0000000, .expected = 0x7f80 }, // largest FP32 finite rounds up
+        .{ .bits = 0x3800000000000000, .expected = 0x0040 }, // 2^-127 becomes a BF16 subnormal
+        .{ .bits = 0xb7a8000000000000, .expected = 0x8002 }, // -1.5*2^-133
+    };
+    for (parity) |entry| {
+        const raw: f64 = @bitCast(entry.bits);
+        const narrowed: f32 = @floatCast(raw);
+        try std.testing.expectEqual(entry.expected, R64.b(raw));
+        try std.testing.expectEqual(entry.expected, b(narrowed));
+    }
+}
+
+test "frozen FP32 hyperconnection boundaries match the pre-repair oracle" {
+    // Frozen at 53b790082 (pre-repair): every operation below is FP32-only, so its words must not move.
+    var h = [_]u16{
+        b(1),       b(1),
+        b(0x1p-8),  b(0x1p-7),
+        b(0x1p-25), b(0x1p-24),
+        b(0x1p-25), b(-0x1p-24),
+    };
+    var collapsed: [2]u16 = undefined;
+    // pre {1,1,1,1}: column 0 lands exactly one 2^-24 above the 1+2^-8 tie, column 1 is exact.
+    collapse(&h, .{ 1, 1, 1, 1 }, &collapsed);
+    var expanded = [_]u16{
+        b(1),          b(-1),
+        b(1 + 0x1p-7), b(1 + 0x1p-7),
+        b(0x1p-8),     b(-0x1p-8),
+        b(0),          b(0),
+    };
+    // post {1,1,1,1}, comb 0.5*I: new[1] = 1 + 0.5*(1+2^-7) is the tie between 1.5 and 1+2^-6; stays 1.5.
+    const mix = Mix{
+        .pre = .{ 1, 1, 1, 1 },
+        .post = .{ 1, 1, 1, 1 },
+        .comb = .{
+            0.5, 0,   0,   0,
+            0,   0.5, 0,   0,
+            0,   0,   0.5, 0,
+            0,   0,   0,   0.5,
+        },
+    };
+    expand(&expanded, &.{ b(1), b(-1) }, mix);
+    const frozen_collapsed = [_]u16{ 0x3f80, 0x3f81 };
+    const frozen_expanded = [_]u16{ 0x3fc0, 0xbfc0, 0x3fc0, 0xbefe, 0x3f80, 0xbf80, 0x3f80, 0xbf80 };
+    try std.testing.expectEqualSlices(u16, &frozen_collapsed, &collapsed);
+    try std.testing.expectEqualSlices(u16, &frozen_expanded, &expanded);
 }

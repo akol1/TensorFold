@@ -3,6 +3,7 @@ test {
     _ = @import("tests/deepseek_v41_reference/projection.zig");
     _ = @import("tests/deepseek_v41_reference/math.zig");
     _ = @import("tests/deepseek_v41_reference/attention_math.zig");
+    _ = @import("tests/deepseek_v41_reference/engram_math.zig");
     _ = @import("tests/deepseek_v41_reference/qualify.zig");
     _ = @import("tests/deepseek_v41_reference/engram_math.zig");
     _ = @import("tests/deepseek_v41_reference/precision.zig");

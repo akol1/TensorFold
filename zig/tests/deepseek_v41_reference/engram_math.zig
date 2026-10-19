@@ -22,6 +22,10 @@ pub fn Module(comptime Real: type) type {
     return struct {
         const m = math.Module(Real);
         const proj = projection.Module(Real);
+        /// Engram gather narrowing: the E4M3 table word times its UE8M0 row scale, rounded to BF16.
+        pub fn narrowedProduct(table: Real, scale: Real) u16 {
+            return m.b(table * scale);
+        }
         const StateImpl = struct {
             map: []const u8,
             history: [3]u32 = .{ 2, 2, 2 },
@@ -75,7 +79,7 @@ pub fn Module(comptime Real: type) type {
                         const column = (lookback - 1) * 8 + head;
                         const row = offset + @as(usize, @intCast(rolling % primes[layer][column]));
                         for (0..256) |d| self.gathered[column * 256 + d] =
-                            m.b(m.value(e.table, row * 256 + d) * m.value(e.scales, row * 8 + d / 32));
+                            narrowedProduct(m.value(e.table, row * 256 + d), m.value(e.scales, row * 8 + d / 32));
                         offset += primes[layer][column];
                     }
                 }
@@ -116,3 +120,33 @@ pub fn Module(comptime Real: type) type {
 /// The retained FP32 instance; every field the caller touches today keeps its name and type.
 pub const f32_module = Module(f32);
 pub const State = f32_module.State;
+
+test "frozen FP32 Engram gather boundaries match the pre-repair oracle" {
+    // Frozen at 53b790082 (pre-repair): FP32 gather words stay; cells pair E4M3 codes and UE8M0 scales.
+    const f32m = math.Module(f32);
+    const cells = [_][2]u8{
+        .{ 56, 254 }, // 1 * 2^127, the largest BF16 exponent
+        .{ 64, 254 }, // 2 * 2^127 overflows to infinity
+        .{ 56, 253 }, // 1 * 2^126
+        .{ 126, 254 }, // 448 * 2^127 overflows to infinity
+        .{ 1, 3 }, // 2^-9 * 2^-124 = 2^-133, one BF16 subnormal unit
+        .{ 3, 3 }, // 3 * 2^-133
+        .{ 7, 2 }, // 7 * 2^-134 = 3.5 units, ties to even 4
+        .{ 1, 2 }, // 2 * 2^-135 = 0.5 units, ties to even zero
+        .{ 1, 4 }, // 2^-132 = 2 units
+        .{ 56, 6 }, // 1 * 2^-121
+        .{ 0, 254 }, // zero table word
+        .{ 0x80 | 1, 3 }, // -2^-133
+        .{ 127, 0 }, // E4M3 NaN table word
+        .{ 255, 0 }, // E4M3 NaN table word
+    };
+    var narrowed: [cells.len]u16 = undefined;
+    for (&narrowed, cells) |*narrowed_word, cell| {
+        narrowed_word.* = f32_module.narrowedProduct(f32m.e4(cell[0]), f32m.e8(cell[1]));
+    }
+    const frozen = [_]u16{
+        0x7f00, 0x7f80, 0x7e80, 0x7f80, 0x0001, 0x0003, 0x0004,
+        0x0000, 0x0002, 0x0300, 0x0000, 0x8001, 0x7fc0, 0x7fc0,
+    };
+    try std.testing.expectEqualSlices(u16, &frozen, &narrowed);
+}

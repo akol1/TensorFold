@@ -8,6 +8,7 @@ const load = @import("load.zig");
 const weights = @import("weights.zig");
 const work = @import("workspace.zig");
 pub const attention = @import("attention.zig");
+pub const csa2 = @import("csa2.zig");
 const kv = @import("kv.zig");
 pub const ops = @import("ops.zig");
 pub const mhc = @import("mhc.zig");

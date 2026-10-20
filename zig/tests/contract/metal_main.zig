@@ -11,6 +11,7 @@ const limits_k = @import("metal_limits.zig");
 const h3_k = @import("metal_h3.zig");
 const h3_topk = @import("metal_h3_topk.zig");
 const drama3_k = @import("metal_drama3.zig");
+const dsv41_attention = @import("metal_dsv41_attention.zig");
 
 const flash_pool = @import("metal_flashnext_pool.zig");
 const flash = @import("metal_flashnext.zig");
@@ -180,6 +181,12 @@ pub fn main(init: std.process.Init) !u8 {
             try kernels.append(a, flash_list[flash_made - 1].kernel());
         }
     };
+    var dsv41: ?dsv41_attention.Probe = null;
+    defer if (dsv41) |*probe| probe.deinit();
+    if (wanted(o, dsv41_attention.spec().name)) {
+        dsv41 = try dsv41_attention.Probe.init(a, device, queue);
+        try kernels.append(a, dsv41.?.kernel());
+    }
     var d3norm: ?drama3_k.Norm = null;
     defer if (d3norm) |*n| n.deinit();
     if (wanted(o, drama3_k.spec().name)) {

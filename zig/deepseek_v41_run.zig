@@ -176,6 +176,7 @@ pub fn main(init: std.process.Init) !void {
     const resident_gate_passed = after.disk_read == before.disk_read;
     const receipt = try std.json.Stringify.valueAlloc(a, .{
         .mode = mode,
+        .attention_parallel = model.pipelines.attention.sparse.parallel_enabled,
         .evidence_origin = "current_invocation_not_historical_qualification",
         .context_capacity = model.cache.plan.capacity,
         .consumed_tokens = model.cache.position,

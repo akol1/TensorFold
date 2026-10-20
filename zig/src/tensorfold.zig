@@ -20,8 +20,6 @@ pub const lanes = @import("lanes");
 pub const segments = @import("core/segments.zig");
 pub const row_projection = @import("core/row_projection.zig");
 pub const affine_mm = @import("core/affine_mm.zig");
-/// The kernel contract: accumulations, element types, shapes, tolerances and gates.
-pub const contract = @import("core/contract/contract.zig");
 /// The checkpoint formats (MLX affine and its fp64 reader for the device checks, exact widen).
 pub const quant = @import("core/quant/quant.zig");
 pub const deepseek_v41_config = @import("families/deepseek_v41/metal/config.zig");

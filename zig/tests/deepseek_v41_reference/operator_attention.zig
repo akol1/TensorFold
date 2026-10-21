@@ -20,7 +20,7 @@ const hyperconnections = @import("operator_hc.zig").hyperconnections;
 pub fn runAttention(gpa: std.mem.Allocator, io: std.Io, model: *Model, snapshot: []const u8, dir: []const u8, layer: usize) !void {
     const blob = try std.Io.Dir.cwd().readFileAlloc(io, snapshot, gpa, .limited(8 << 20));
     defer gpa.free(blob);
-    const cfg = model.cfg.text_config;
+    const cfg = model.cfg;
     if (layer >= model.weights.layers.len) return error.InvalidAttentionLayer;
     const snapshot_offset = layer * 2 * 61488;
     if (blob.len < snapshot_offset + 40960 + 10240) return error.InvalidAttentionSnapshot;
@@ -87,7 +87,7 @@ pub fn runAttention(gpa: std.mem.Allocator, io: std.Io, model: *Model, snapshot:
     defer report.deinit(gpa);
     var count: usize = 0;
     var header: [512]u8 = undefined;
-    try report.appendSlice(gpa, try std.fmt.bufPrint(&header, "{{\"mode\":\"attention-sameinput\",\"token\":0,\"layer\":{d},\"input_offset_bytes\":{d},\"input_length_bytes\":10240,\"identical_normalized_input\":true,\"retained_normalized_prefix_layers\":{d},\"compression_ratio\":{d},\"reference_dot\":\"independent_EXL3_FP64\",\"qualification_gate_applied\":false,\"cases\":[\n", .{ layer, snapshot_offset + 40960, layer, cfg.compress_ratios[layer] }));
+    try report.appendSlice(gpa, try std.fmt.bufPrint(&header, "{{\"mode\":\"attention-sameinput\",\"token\":0,\"layer\":{d},\"input_offset_bytes\":{d},\"input_length_bytes\":10240,\"identical_normalized_input\":true,\"retained_normalized_prefix_layers\":{d},\"compression_ratio\":{d},\"reference_dot\":\"independent_EXL3_FP64\",\"qualification_gate_applied\":false,\"cases\":[\n", .{ layer, snapshot_offset + 40960, layer, cfg.compress_ratios.items()[layer] }));
     inline for (std.enums.values(AttentionStage)) |stage|
         try attentionMetric(u16, gpa, &report, &count, @tagName(stage), "same_normalized_input_chain", capture.row(stage), capture.cpuRow(stage));
 
@@ -103,14 +103,14 @@ pub fn runAttention(gpa: std.mem.Allocator, io: std.Io, model: *Model, snapshot:
     try attentionProjection(gpa, model, weights.wo_b, capture.view(.grouped), "wo_b", &scratch, expected, &report, &count);
 
     var same_input: [32768]u16 = undefined;
-    math.rms(capture.row(.qr_projection), weights.q_norm, cfg.rms_norm_eps, same_input[0..1280]);
+    math.rms(capture.row(.qr_projection), weights.q_norm, cfg.eps, same_input[0..1280]);
     try attentionMetric(u16, gpa, &report, &count, "qr_norm", "same_native_input_reference_rms", capture.row(.qr_norm), same_input[0..1280]);
-    math.rms(capture.row(.kv_projection), weights.kv_norm, cfg.rms_norm_eps, same_input[0..512]);
+    math.rms(capture.row(.kv_projection), weights.kv_norm, cfg.eps, same_input[0..512]);
     try attentionMetric(u16, gpa, &report, &count, "kv_norm", "same_native_input_reference_rms", capture.row(.kv_norm), same_input[0..512]);
     @memcpy(same_input[0..512], capture.row(.kv_rope));
     math.quantize(same_input[0..512], .window);
     try attentionMetric(u16, gpa, &report, &count, "kv_quantized", "same_native_input_reference_quantize", capture.row(.kv_quantized), same_input[0..512]);
-    if (cfg.compress_ratios[layer] == 1) {
+    if (cfg.compress_ratios.items()[layer] == 1) {
         const source = try model.cache.source(@intCast(layer), 1);
         const compressed = model.workspace.view(.collapsed);
         const unpack_cb = model.queue.commandBufferUnretained();
@@ -139,7 +139,7 @@ pub fn runAttention(gpa: std.mem.Allocator, io: std.Io, model: *Model, snapshot:
             state.sparseHead(capture.row(.q)[head * 512 ..][0..512], capture.row(.kv_quantized), &indices, sinks[head], same_input[head * 512 ..][0..512]);
         try attentionMetric(u16, gpa, &report, &count, "sparse_o", "same_native_q_window_and_compressed_kv_reference_sparse", capture.row(.sparse_o), &same_input);
     }
-    if (cfg.compress_ratios[layer] == 0) {
+    if (cfg.compress_ratios.items()[layer] == 0) {
         const indices = [_]i32{0};
         for (0..64) |head|
             state.sparseHead(capture.row(.q)[head * 512 ..][0..512], capture.row(.kv_quantized), &indices, math.value(weights.sink, head), same_input[head * 512 ..][0..512]);

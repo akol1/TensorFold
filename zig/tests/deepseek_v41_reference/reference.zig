@@ -21,7 +21,7 @@ pub const MoeRouting = struct {
     weights: [6]f32 = undefined,
 };
 
-pub fn moeSelect(moe_weights: weights.Moe, c: config.Text, logits: *const [384]f32, scores: *[384]f32, ids: *[6]u32, routing_weights: *[6]f32) void {
+pub fn moeSelect(moe_weights: weights.Moe, c: config.Config, logits: *const [384]f32, scores: *[384]f32, ids: *[6]u32, routing_weights: *[6]f32) void {
     @setFloatMode(.strict);
     for (logits, scores) |z, *score| {
         const softplus = if (z > 20) z else std.math.log1p(@exp(z));
@@ -45,10 +45,10 @@ pub fn moeSelect(moe_weights: weights.Moe, c: config.Text, logits: *const [384]f
     var normalization: f64 = 0;
     for (routing_weights) |v| normalization += v;
     const denominator = @as(f32, @floatCast(normalization)) + 1e-20;
-    for (routing_weights) |*v| v.* = (v.* / denominator) * c.routed_scaling_factor;
+    for (routing_weights) |*v| v.* = (v.* / denominator) * c.routed_scale;
 }
 
-pub fn moeActivation(gate: []const u16, up: []const u16, route: f32, c: config.Text, activation: []u16) void {
+pub fn moeActivation(gate: []const u16, up: []const u16, route: f32, c: config.Config, activation: []u16) void {
     @setFloatMode(.strict);
     for (activation, gate, up) |*v, g_value, u_value| {
         const g = @min(math.f(g_value), c.swiglu_limit);
@@ -59,7 +59,7 @@ pub fn moeActivation(gate: []const u16, up: []const u16, route: f32, c: config.T
 
 pub const Reference = struct {
     gpa: std.mem.Allocator,
-    c: config.Text,
+    c: config.Config,
     w: *const weights.Model,
     checkpoint: *const cp.Checkpoint,
     capacity: u32,
@@ -87,11 +87,11 @@ pub const Reference = struct {
     };
 
     /// Borrowed model/checkpoint/config/map must outlive this instance; capacity is the teacher sequence length.
-    pub fn init(gpa: std.mem.Allocator, c: config.Text, w: *const weights.Model, checkpoint: *const cp.Checkpoint, token_map: []const u8, capacity: u32) !Reference {
-        if (capacity == 0 or capacity > c.max_position_embeddings or capacity > attention.max_capacity)
+    pub fn init(gpa: std.mem.Allocator, c: config.Config, w: *const weights.Model, checkpoint: *const cp.Checkpoint, token_map: []const u8, capacity: u32) !Reference {
+        if (capacity == 0 or capacity > c.rope.max_positions or capacity > attention.max_capacity)
             return error.InvalidReferenceCapacity;
-        if (c.hidden_size != 5120 or c.num_hidden_layers != 40 or c.vocab_size != 129280 or
-            c.num_experts_per_tok != 6 or c.n_routed_experts != 384 or c.hc_mult != 4)
+        if (c.hidden != 5120 or c.layers != 40 or c.vocab != 129280 or
+            c.topk != 6 or c.experts != 384 or c.hc_mult != 4)
             return error.UnsupportedReferenceArchitecture;
         const engram_state = try engram.State.init(token_map);
         var projection_scratch = try projection.Scratch.init(gpa, 8192, 129280);
@@ -120,20 +120,20 @@ pub const Reference = struct {
             if (layer.engram) |e| try self.engram_state.apply(e, if (layer_id == 1) 0 else 1, compressed, &self.h, self.c, &self.projection_scratch);
             const attn_mix = math.mixes(&self.h, layer.hc_attn, self.c);
             math.collapse(&self.h, pre, &self.input);
-            math.rms(&self.input, layer.attn_norm, self.c.rms_norm_eps, &self.input);
+            math.rms(&self.input, layer.attn_norm, self.c.eps, &self.input);
             try self.attention_state.apply(layer.attn, layer_id, &self.input, self.position, self.c, &self.output, &self.projection_scratch);
             math.expand(&self.h, &self.output, attn_mix);
             if (self.observer) |observer| observer.read(observer.ctx, layer_id, .attention, self);
             const ffn_mix = math.mixes(&self.h, layer.hc_ffn, self.c);
             math.collapse(&self.h, attn_mix.pre, &self.input);
-            math.rms(&self.input, layer.ffn_norm, self.c.rms_norm_eps, &self.input);
+            math.rms(&self.input, layer.ffn_norm, self.c.eps, &self.input);
             try self.moe(layer.moe, layer_id);
             math.expand(&self.h, &self.output, ffn_mix);
             if (self.observer) |observer| observer.read(observer.ctx, layer_id, .moe, self);
             pre = ffn_mix.pre;
         }
         math.collapse(&self.h, pre, &self.input);
-        math.rms(&self.input, self.w.norm, self.c.rms_norm_eps, &self.input);
+        math.rms(&self.input, self.w.norm, self.c.eps, &self.input);
         try projection.applyF32(.{ .trellis = self.w.head }, &self.input, self.logits, &self.projection_scratch);
         for (self.logits) |v| if (!std.math.isFinite(v)) return error.NonFiniteReferenceLogits;
         self.engram_state.advance(compressed);

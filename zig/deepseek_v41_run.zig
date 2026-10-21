@@ -189,7 +189,7 @@ pub fn main(init: std.process.Init) !void {
         try weights.validate(&plan);
         const device = try mtl.Device.init();
         defer device.deinit();
-        std.debug.print("{{\"mode\":\"plan\",\"weight_bytes\":{d},\"shards\":{d},\"tensors\":{d},\"context\":{d},\"metal_working_set_bytes\":{d}}}\n", .{ plan.bytes, plan.shards.items.len, plan.tensors.count(), cfg.text_config.max_position_embeddings, device.maxWorkingSet() });
+        std.debug.print("{{\"mode\":\"plan\",\"weight_bytes\":{d},\"shards\":{d},\"tensors\":{d},\"context\":{d},\"metal_working_set_bytes\":{d}}}\n", .{ plan.bytes, plan.shards.items.len, plan.tensors.count(), cfg.text_config.rope.max_positions, device.maxWorkingSet() });
         return;
     }
     const is_operators = std.mem.eql(u8, mode, "operators");

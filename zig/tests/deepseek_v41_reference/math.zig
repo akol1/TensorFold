@@ -3,7 +3,7 @@ const std = @import("std");
 const tf = @import("tensorfold");
 const Tensor = tf.checkpoint_metal.Tensor;
 const Hc = tf.deepseek_v41_weights.Hc;
-const Config = tf.deepseek_v41_config.Text;
+const Config = tf.deepseek_v41_config.Config;
 
 pub fn f(x: u16) f32 {
     return @bitCast(@as(u32, x) << 16);
@@ -212,7 +212,7 @@ pub fn mixes(x: []const u16, hc: Hc, c: Config) Mix {
 pub fn mixesOf(comptime T: type, x: []const u16, hc: Hc, c: Config) MixOf(T) {
     var projected: [24]T = undefined;
     denseOf(T, hc.projection, x, &projected);
-    const r = inverseOf(T, x, c.rms_norm_eps);
+    const r = inverseOf(T, x, c.eps);
     return splitOf(T, &projected, r, hc, c);
 }
 /// The affine, softmax and Sinkhorn coefficient stage at reference precision T.
@@ -304,7 +304,7 @@ pub fn ropeFrequency(index: usize, theta: f32, original: u32, factor: f32, beta_
 }
 pub fn rope(x: []u16, position: usize, compressed: bool, inverse: bool, c: Config) void {
     for (0..32) |i| {
-        const frequency = ropeFrequency(i, if (compressed) c.compress_rope_theta else c.rope_theta, if (compressed) c.rope_scaling.original_max_position_embeddings else 0, c.rope_scaling.factor, c.rope_scaling.beta_fast, c.rope_scaling.beta_slow);
+        const frequency = ropeFrequency(i, if (compressed) c.rope.compress_theta else c.rope.theta, if (compressed) c.rope.original_max_position_embeddings else 0, c.rope.factor, c.rope.beta_fast, c.rope.beta_slow);
         const angle: f32 = @as(f32, @floatFromInt(position)) * frequency;
         const cosine = @cos(angle);
         const sine = @sin(angle) * (if (inverse) @as(f32, -1) else @as(f32, 1));

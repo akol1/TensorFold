@@ -3,7 +3,7 @@ const std = @import("std");
 const tf = @import("tensorfold");
 const m = @import("math.zig");
 const projection = @import("projection.zig");
-const Config = tf.deepseek_v41_config.Text;
+const Config = tf.deepseek_v41_config.Config;
 const Attention = tf.deepseek_v41_weights.Attention;
 
 pub const max_capacity = 4096;
@@ -126,7 +126,7 @@ pub const State = struct {
         const compressor = a.compressor orelse return false;
         const owner = (layer - 2) / 6;
         self.active_owner = owner;
-        const ratio: usize = c.compress_ratios[layer];
+        const ratio: usize = c.compress_ratios.items()[layer];
         if (ratio == 1) {
             try projection.apply(compressor.wkv, x, &self.latent, scratch);
         } else {
@@ -136,10 +136,10 @@ pub const State = struct {
             if ((position + 1) % ratio != 0) return false;
             poolOf(f32, .{ &self.partial_kv[owner][0], &self.partial_kv[owner][1] }, .{ &self.partial_gate[owner][0], &self.partial_gate[owner][1] }, &self.latent);
         }
-        m.rms(&self.latent, compressor.norm, c.rms_norm_eps, &self.latent);
+        m.rms(&self.latent, compressor.norm, c.eps, &self.latent);
         const indexer = a.indexer.?;
         try projection.apply(indexer.wk.?, &self.latent, &self.index_key, scratch);
-        m.rms(&self.index_key, indexer.k_norm.?, c.rms_norm_eps, &self.index_key);
+        m.rms(&self.index_key, indexer.k_norm.?, c.eps, &self.index_key);
         const group_position = position + 1 - ratio;
         m.rope(&self.index_key, group_position, true, false, c);
         m.quantize(&self.index_key, .index);
@@ -160,7 +160,7 @@ pub const State = struct {
         }
         if (nblocks == 0) return;
         self.blocks[nblocks - 1] = std.math.inf(f32);
-        for (0..@min(nblocks, c.candidate_topk_blocks)) |_| {
+        for (0..@min(nblocks, c.candidate_blocks)) |_| {
             var best: usize = 0;
             for (0..nblocks) |i| if (self.blocks[i] > self.blocks[best]) {
                 best = i;
@@ -197,8 +197,8 @@ pub const State = struct {
             }
             self.scores[row] = m.f(m.b(@floatCast(score)));
         }
-        if (layer == c.candidate_source_layer_id) self.chooseCandidates(count, c);
-        if (layer > c.candidate_source_layer_id) for (0..count) |row| {
+        if (layer == c.candidate_source) self.chooseCandidates(count, c);
+        if (layer > c.candidate_source) for (0..count) |row| {
             if (!self.candidates[row]) self.scores[row] = -std.math.inf(f32);
         };
         @memcpy(self.score_copy[0..count], self.scores[0..count]);
@@ -290,10 +290,10 @@ pub const State = struct {
         probe.record(probe.ctx, layer, position, count, self.selected_len, margin, margin_ideal, flips, lowest, highest_unselected);
     }
     pub fn apply(self: *State, a: Attention, layer: usize, x: []const u16, position: usize, c: Config, out: []u16, scratch: *projection.Scratch) !void {
-        const compressed = c.compress_ratios[layer] != 0;
+        const compressed = c.compress_ratios.items()[layer] != 0;
         try projection.apply(.{ .trellis = a.wq_a }, x, &self.qr, scratch);
         self.observe(.qr_projection, &self.qr);
-        m.rms(&self.qr, a.q_norm, c.rms_norm_eps, &self.qr);
+        m.rms(&self.qr, a.q_norm, c.eps, &self.qr);
         self.observe(.qr_norm, &self.qr);
         try projection.apply(.{ .trellis = a.wq_b }, &self.qr, &self.q, scratch);
         self.observe(.q_projection, &self.q);
@@ -301,7 +301,7 @@ pub const State = struct {
         self.observe(.q, &self.q);
         try projection.apply(.{ .trellis = a.wkv }, x, &self.kv, scratch);
         self.observe(.kv_projection, &self.kv);
-        m.rms(&self.kv, a.kv_norm, c.rms_norm_eps, &self.kv);
+        m.rms(&self.kv, a.kv_norm, c.eps, &self.kv);
         self.observe(.kv_norm, &self.kv);
         m.rope(&self.kv, position, compressed, false, c);
         self.observe(.kv_rope, &self.kv);
@@ -312,7 +312,7 @@ pub const State = struct {
         var count: usize = 0;
         if (compressed) {
             _ = try self.publish(a, layer, x, position, c, scratch);
-            count = (position + 1) / c.compress_ratios[layer];
+            count = (position + 1) / c.compress_ratios.items()[layer];
             try self.selectPositions(a, layer, x, position, count, c, scratch);
         }
         var indices: [640]i32 = undefined;

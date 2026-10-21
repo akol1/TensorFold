@@ -74,7 +74,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, model: *Model, ids: []const u32, 
         model.residency.remove(buffer);
         model.residency.commit();
     }
-    var reference = try Reference.init(gpa, model.cfg.text_config, &model.weights, &model.checkpoint, token_map, @intCast(ids.len));
+    var reference = try Reference.init(gpa, model.cfg, &model.weights, &model.checkpoint, token_map, @intCast(ids.len));
     defer reference.deinit();
     reference.observer = .{ .ctx = &capture, .read = Capture.reference };
     const expected = try gpa.alloc(f32, ids.len * 129280);

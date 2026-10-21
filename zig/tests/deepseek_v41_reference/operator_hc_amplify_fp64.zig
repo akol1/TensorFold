@@ -13,8 +13,8 @@ const Config = tf.deepseek_v41_config.Config;
 fn stageF64(stream: []const u16, hc: Hc, cfg: Config, branch: []const u16, y_pre: []f64, y_bf: *[h.stream_width]u16, coll_pre: []f64, inv_out: *f64, comb_out: *[16]f64) void {
     var proj: [h.mix_count]f64 = undefined;
     math.denseOf(f64, hc.projection, stream, &proj);
-    const inv = math.inverseOf(f64, stream, cfg.text_config.rms_norm_eps);
-    const mix = math.splitOf(f64, &proj, inv, hc, cfg.text_config);
+    const inv = math.inverseOf(f64, stream, cfg.eps);
+    const mix = math.splitOf(f64, &proj, inv, hc, cfg);
     inv_out.* = inv;
     comb_out.* = mix.comb;
     for (0..h.width) |d| {

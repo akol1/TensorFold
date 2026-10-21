@@ -49,3 +49,11 @@ test "score labels reject invalid counts and vocabulary IDs before device access
     labels[0] = 17;
     try std.testing.expectError(error.InvalidLabelCount, q.engine.Engine.validateScoreLabels(&labels, 32));
 }
+
+test "native server refuses experimental BF16 before weight loading" {
+    var g = try q.geometry.parse(a, fixture);
+    try std.testing.expectError(error.ExperimentalQwenBf16, q.native.requireQualifiedFormat(g));
+    try std.testing.expect(q.native.explain(null, error.ExperimentalQwenBf16) != null);
+    g.bf16 = false;
+    try q.native.requireQualifiedFormat(g);
+}

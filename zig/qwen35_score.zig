@@ -13,16 +13,6 @@ fn writeAll(bytes: []const u8) !void {
         at += @intCast(n);
     }
 }
-const Prefix = struct { ids: []u32, cache: E.Cache };
-fn restore(e: *E.Engine, dst: *E.Cache, src: *const E.Cache) !void {
-    try dst.state.copyFrom(0, src.state.ptr, e.g.stateBytes(), e.stream.handle);
-    const rowbytes: usize = 256 * 2;
-    const planes = e.g.attentions() * 2 * e.g.kv_heads;
-    for (0..planes) |i| try dst.kv.copyFrom(i * dst.cap * rowbytes, src.kv.ptr + i * src.cap * rowbytes, src.len * rowbytes, e.stream.handle);
-    dst.len = src.len;
-    dst.written = src.len;
-    dst.last = null;
-}
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -40,14 +30,6 @@ pub fn main(init: std.process.Init) !void {
     for (&work) |*cache| {
         cache.* = try E.Cache.init(gpa, e, 65536);
         made += 1;
-    }
-    var prefixes: std.ArrayList(Prefix) = .empty;
-    defer {
-        for (prefixes.items) |*p| {
-            p.cache.deinit(gpa);
-            gpa.free(p.ids);
-        }
-        prefixes.deinit(gpa);
     }
     try writeAll("{\"ready\":true,\"engine\":\"TensorFold-qwen35-bf16-experimental\"}\n");
     var line_: std.ArrayList(u8) = .empty;
@@ -82,8 +64,7 @@ pub fn main(init: std.process.Init) !void {
         if (requests.len == 0 or requests.len > 4) return error.InvalidBatch;
         const start = std.Io.Clock.awake.now(io).toNanoseconds();
         var offsets: [4]usize = undefined;
-        var cached: [4]usize = @splat(0);
-        // Exact token-keyed prefix states only: every request executes the remaining forward and vocabulary head.
+        // Fresh states keep this development tool independent of the native shared prompt-cache owner.
         for (requests, 0..) |r, i| {
             if (r.input_ids.len == 0 or r.input_ids.len > 65530) return error.InvalidPrompt;
             for (r.input_ids) |id| if (id >= e.g.vocab) return error.InvalidToken;
@@ -93,30 +74,8 @@ pub fn main(init: std.process.Init) !void {
                 if (id >= e.g.vocab) return error.InvalidLabel;
                 work[i].score_labels[j + 1] = id;
             }
-            const cut: usize = if (r.input_ids.len > 64) 64 else 0;
-            offsets[i] = cut;
-            if (cut == 0) {
-                try work[i].reset(e);
-                continue;
-            }
-            var found: ?usize = null;
-            for (prefixes.items, 0..) |p, pi| if (std.mem.eql(u32, p.ids, r.input_ids[0..cut])) {
-                found = pi;
-                break;
-            };
-            if (found != null) cached[i] = cut;
-            if (found == null) {
-                if (prefixes.items.len >= 8) {
-                    var old = prefixes.orderedRemove(0);
-                    old.cache.deinit(gpa);
-                    gpa.free(old.ids);
-                }
-                var p: Prefix = .{ .ids = try gpa.dupe(u32, r.input_ids[0..cut]), .cache = try E.Cache.init(gpa, e, 64) };
-                try e.forward(&.{.{ .cache = &p.cache, .rows = cut }}, r.input_ids[0..cut], .last);
-                try prefixes.append(gpa, p);
-                found = prefixes.items.len - 1;
-            }
-            try restore(e, &work[i], &prefixes.items[found.?].cache);
+            offsets[i] = 0;
+            try work[i].reset(e);
         }
         // Process independent prompts together while retaining each final row and state.
         while (true) {
@@ -150,7 +109,7 @@ pub fn main(init: std.process.Init) !void {
                 if (j > 0) try w.writeByte(',');
                 try w.print("{d}", .{@as(f64, logits[j]) - lse});
             }
-            try w.print("],\"cached_tokens\":{d}}}", .{cached[i]});
+            try w.print("],\"cached_tokens\":{d}}}", .{@as(usize, 0)});
         }
         const ns = std.Io.Clock.awake.now(io).toNanoseconds() - start;
         try w.print("],\"engine_ms\":{d}}}\n", .{@as(f64, @floatFromInt(ns)) / 1e6});

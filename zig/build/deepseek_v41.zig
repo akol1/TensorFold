@@ -50,6 +50,7 @@ pub fn checks(
             .imports = &.{
                 .{ .name = "tensorfold", .module = engine },
                 .{ .name = "metal", .module = metal },
+                .{ .name = "contract", .module = @import("kernel_contract.zig").module(b, target, optimize) },
             },
         }),
         .filters = &.{"tests.deepseek_v41_reference."},

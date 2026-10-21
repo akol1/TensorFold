@@ -20,7 +20,7 @@ const hyperconnections = @import("operator_hc.zig").hyperconnections;
 pub fn runAttention(gpa: std.mem.Allocator, io: std.Io, model: *Model, snapshot: []const u8, dir: []const u8, layer: usize) !void {
     const blob = try std.Io.Dir.cwd().readFileAlloc(io, snapshot, gpa, .limited(8 << 20));
     defer gpa.free(blob);
-    const cfg = model.cfg.text_config;
+    const cfg = model.cfg;
     if (layer >= model.weights.layers.len) return error.InvalidAttentionLayer;
     const snapshot_offset = layer * 2 * 61488;
     if (blob.len < snapshot_offset + 40960 + 10240) return error.InvalidAttentionSnapshot;
@@ -103,9 +103,9 @@ pub fn runAttention(gpa: std.mem.Allocator, io: std.Io, model: *Model, snapshot:
     try attentionProjection(gpa, model, weights.wo_b, capture.view(.grouped), "wo_b", &scratch, expected, &report, &count);
 
     var same_input: [32768]u16 = undefined;
-    math.rms(capture.row(.qr_projection), weights.q_norm, cfg.rms_norm_eps, same_input[0..1280]);
+    math.rms(capture.row(.qr_projection), weights.q_norm, cfg.eps, same_input[0..1280]);
     try attentionMetric(u16, gpa, &report, &count, "qr_norm", "same_native_input_reference_rms", capture.row(.qr_norm), same_input[0..1280]);
-    math.rms(capture.row(.kv_projection), weights.kv_norm, cfg.rms_norm_eps, same_input[0..512]);
+    math.rms(capture.row(.kv_projection), weights.kv_norm, cfg.eps, same_input[0..512]);
     try attentionMetric(u16, gpa, &report, &count, "kv_norm", "same_native_input_reference_rms", capture.row(.kv_norm), same_input[0..512]);
     @memcpy(same_input[0..512], capture.row(.kv_rope));
     math.quantize(same_input[0..512], .window);

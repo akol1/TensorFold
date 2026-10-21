@@ -12,7 +12,7 @@ const attentionMetric = diagnostic.attentionMetric;
 pub fn hyperconnections(gpa: std.mem.Allocator, model: *Model, stream_bytes: []const u8, branch: attention.View, report: *std.ArrayList(u8), count: *usize, layer: usize) !void {
     const ws = &model.workspace;
     const hc = model.weights.layers[layer].hc_ffn;
-    const cfg = model.cfg.text_config;
+    const cfg = model.cfg;
     const stream = ws.view(.stream);
     @memcpy(stream.buffer.contents()[stream.offset..][0..40960], stream_bytes[0..40960]);
     var input: [20480]u16 = undefined;
@@ -23,11 +23,11 @@ pub fn hyperconnections(gpa: std.mem.Allocator, model: *Model, stream_bytes: []c
     var squares: f64 = 0;
     for (input) |v| squares += @as(f64, math.f(v)) * math.f(v);
     const mean = math.meanFromWide(squares, input.len);
-    const expected_inv = [_]f32{math.idealRsqrt(mean + cfg.rms_norm_eps)};
+    const expected_inv = [_]f32{math.idealRsqrt(mean + cfg.eps)};
     const cb = model.queue.commandBufferUnretained();
     const enc = cb.compute(.serial);
     for (model.checkpoint.shards.items) |shard| enc.useResource(shard.buffer, mtl.ResourceUsage.read);
-    tf.deepseek_v41.mhc.encodeRms(enc, &model.pipelines.mhc, stream, ws.view(.inv), .{ .rows = 1, .width = 5120, .stream_stride = 20480, .eps = cfg.rms_norm_eps });
+    tf.deepseek_v41.mhc.encodeRms(enc, &model.pipelines.mhc, stream, ws.view(.inv), .{ .rows = 1, .width = 5120, .stream_stride = 20480, .eps = cfg.eps });
     tf.deepseek_v41.ops.encodeDense(enc, &model.pipelines.ops, stream, .{ .buffer = hc.projection.buffer, .offset = hc.projection.offset }, ws.view(.mixes), .{ .rows = 1, .k = 20480, .n = 24, .x_stride = 20480, .w_stride = 20480, .y_stride = 24, .w_dtype = .f32, .y_dtype = .f32 });
     enc.barrier();
     tf.deepseek_v41.mhc.encodeSplit(enc, &model.pipelines.mhc, ws.view(.mixes), ws.view(.inv), .{ .buffer = hc.scale.buffer, .offset = hc.scale.offset }, .{ .buffer = hc.base.buffer, .offset = hc.base.offset }, ws.view(.attention_pre), ws.view(.post), ws.view(.comb), .{ .rows = 1, .eps = cfg.hc_eps });
@@ -62,7 +62,7 @@ pub fn hyperconnections(gpa: std.mem.Allocator, model: *Model, stream_bytes: []c
         next_enc.useResource(norm.buffer, mtl.ResourceUsage.read);
         tf.deepseek_v41.mhc.encodeCollapse(next_enc, &model.pipelines.mhc, stream, ws.view(.attention_pre), ws.view(.collapsed), .{ .rows = 1, .width = 5120, .stream_stride = 20480, .y_stride = 5120 });
         next_enc.barrier();
-        tf.deepseek_v41.ops.encodeRms(next_enc, &model.pipelines.ops, ws.view(.collapsed), .{ .buffer = norm.buffer, .offset = norm.offset }, ws.view(.branch), .{ .rows = 1, .width = 5120, .x_stride = 5120, .y_stride = 5120, .eps = cfg.rms_norm_eps });
+        tf.deepseek_v41.ops.encodeRms(next_enc, &model.pipelines.ops, ws.view(.collapsed), .{ .buffer = norm.buffer, .offset = norm.offset }, ws.view(.branch), .{ .rows = 1, .width = 5120, .x_stride = 5120, .y_stride = 5120, .eps = cfg.eps });
         next_enc.end();
         next_cb.commit();
         next_cb.wait();
@@ -71,7 +71,7 @@ pub fn hyperconnections(gpa: std.mem.Allocator, model: *Model, stream_bytes: []c
         try attentionMetric(u16, gpa, report, count, "next_collapse", "same_retained_ffn_stream_and_native_pre", diagnosticRow(u16, ws.view(.collapsed), 5120), &collapsed);
         math.collapse(&input, expected_mix.pre, &collapsed);
         try attentionMetric(u16, gpa, report, count, "next_collapse", "same_retained_ffn_stream_reference_pre", diagnosticRow(u16, ws.view(.collapsed), 5120), &collapsed);
-        math.rms(&collapsed, norm, cfg.rms_norm_eps, &collapsed);
+        math.rms(&collapsed, norm, cfg.eps, &collapsed);
         try attentionMetric(u16, gpa, report, count, "next_normalized", "same_retained_ffn_stream_reference_pre_and_norm", diagnosticRow(u16, ws.view(.branch), 5120), &collapsed);
     }
 }

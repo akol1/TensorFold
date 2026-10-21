@@ -3,7 +3,7 @@ const std = @import("std");
 const tf = @import("tensorfold");
 const Tensor = tf.checkpoint_metal.Tensor;
 const Hc = tf.deepseek_v41_weights.Hc;
-const Config = tf.deepseek_v41_config.Text;
+const Config = tf.deepseek_v41_config.Config;
 
 pub fn f(x: u16) f32 {
     return @bitCast(@as(u32, x) << 16);
@@ -212,7 +212,7 @@ pub fn mixes(x: []const u16, hc: Hc, c: Config) Mix {
 pub fn mixesOf(comptime T: type, x: []const u16, hc: Hc, c: Config) MixOf(T) {
     var projected: [24]T = undefined;
     denseOf(T, hc.projection, x, &projected);
-    const r = inverseOf(T, x, c.rms_norm_eps);
+    const r = inverseOf(T, x, c.eps);
     return splitOf(T, &projected, r, hc, c);
 }
 /// The affine, softmax and Sinkhorn coefficient stage at reference precision T.

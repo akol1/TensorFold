@@ -93,7 +93,7 @@ fn maximum(row: []const f32) !u32 {
 
 pub fn run(gpa: std.mem.Allocator, io: std.Io, model: *Model, ids: []const u32, token_map: []const u8, dir: []const u8) !Result {
     if (ids.len == 0 or ids.len > 16) return error.InvalidOracleWindow;
-    var reference = try Reference.init(gpa, model.cfg.text_config, &model.weights, &model.checkpoint, token_map, @intCast(ids.len));
+    var reference = try Reference.init(gpa, model.cfg, &model.weights, &model.checkpoint, token_map, @intCast(ids.len));
     defer reference.deinit();
     var margins = MarginLog{};
     reference.attention_state.score_probe = .{ .ctx = &margins, .record = &MarginLog.capture };

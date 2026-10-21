@@ -3,7 +3,7 @@ const std = @import("std");
 const tf = @import("tensorfold");
 const m = @import("math.zig");
 const projection = @import("projection.zig");
-const Config = tf.deepseek_v41_config.Text;
+const Config = tf.deepseek_v41_config.Config;
 const Attention = tf.deepseek_v41_weights.Attention;
 
 pub const max_capacity = 4096;
@@ -136,10 +136,10 @@ pub const State = struct {
             if ((position + 1) % ratio != 0) return false;
             poolOf(f32, .{ &self.partial_kv[owner][0], &self.partial_kv[owner][1] }, .{ &self.partial_gate[owner][0], &self.partial_gate[owner][1] }, &self.latent);
         }
-        m.rms(&self.latent, compressor.norm, c.rms_norm_eps, &self.latent);
+        m.rms(&self.latent, compressor.norm, c.eps, &self.latent);
         const indexer = a.indexer.?;
         try projection.apply(indexer.wk.?, &self.latent, &self.index_key, scratch);
-        m.rms(&self.index_key, indexer.k_norm.?, c.rms_norm_eps, &self.index_key);
+        m.rms(&self.index_key, indexer.k_norm.?, c.eps, &self.index_key);
         const group_position = position + 1 - ratio;
         m.rope(&self.index_key, group_position, true, false, c);
         m.quantize(&self.index_key, .index);
@@ -293,7 +293,7 @@ pub const State = struct {
         const compressed = c.compress_ratios[layer] != 0;
         try projection.apply(.{ .trellis = a.wq_a }, x, &self.qr, scratch);
         self.observe(.qr_projection, &self.qr);
-        m.rms(&self.qr, a.q_norm, c.rms_norm_eps, &self.qr);
+        m.rms(&self.qr, a.q_norm, c.eps, &self.qr);
         self.observe(.qr_norm, &self.qr);
         try projection.apply(.{ .trellis = a.wq_b }, &self.qr, &self.q, scratch);
         self.observe(.q_projection, &self.q);
@@ -301,7 +301,7 @@ pub const State = struct {
         self.observe(.q, &self.q);
         try projection.apply(.{ .trellis = a.wkv }, x, &self.kv, scratch);
         self.observe(.kv_projection, &self.kv);
-        m.rms(&self.kv, a.kv_norm, c.rms_norm_eps, &self.kv);
+        m.rms(&self.kv, a.kv_norm, c.eps, &self.kv);
         self.observe(.kv_norm, &self.kv);
         m.rope(&self.kv, position, compressed, false, c);
         self.observe(.kv_rope, &self.kv);

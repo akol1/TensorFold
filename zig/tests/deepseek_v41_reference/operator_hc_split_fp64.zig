@@ -44,7 +44,7 @@ test "mHC fp32 reference path stays bit-identical under the comptime parameteriz
         const row = eight_rows[r * h.width ..][0..h.width];
         var stream: [h.stream_width]u16 = undefined;
         for (0..h.copies) |c| @memcpy(stream[c * h.width ..][0..h.width], row);
-        const parameterized = math.mixesOf(f32, &stream, hc, cfg.text_config);
+        const parameterized = math.mixesOf(f32, &stream, hc, cfg);
         const legacy = mixesLegacy(&stream, hc, cfg);
         try std.testing.expect(std.meta.eql(parameterized, legacy));
     }
@@ -57,10 +57,10 @@ fn mixesLegacy(x: []const u16, hc: Hc, c: Config) math.Mix {
     var squares: f64 = 0;
     for (x) |v| squares += @as(f64, math.f(v)) * math.f(v);
     const mean = math.meanFromWide(squares, x.len);
-    const r = math.idealRsqrt(mean + c.text_config.rms_norm_eps);
+    const r = math.idealRsqrt(mean + c.eps);
     var m: math.Mix = undefined;
     for (0..4) |i| {
-        m.pre[i] = math.sigmoid(@mulAdd(f32, projected[i] * r, math.value(hc.scale, 0), math.value(hc.base, i))) + c.text_config.hc_eps;
+        m.pre[i] = math.sigmoid(@mulAdd(f32, projected[i] * r, math.value(hc.scale, 0), math.value(hc.base, i))) + c.hc_eps;
         m.post[i] = 2 * math.sigmoid(@mulAdd(f32, projected[i + 4] * r, math.value(hc.scale, 1), math.value(hc.base, i + 4)));
     }
     for (0..4) |i| {
@@ -75,17 +75,17 @@ fn mixesLegacy(x: []const u16, hc: Hc, c: Config) math.Mix {
         }
         const denominator = (m.comb[i * 4] + m.comb[i * 4 + 2]) +
             (m.comb[i * 4 + 1] + m.comb[i * 4 + 3]);
-        for (0..4) |j| m.comb[i * 4 + j] = m.comb[i * 4 + j] / denominator + c.text_config.hc_eps;
+        for (0..4) |j| m.comb[i * 4 + j] = m.comb[i * 4 + j] / denominator + c.hc_eps;
     }
-    for (0..c.text_config.hc_sinkhorn_iters) |iteration| {
+    for (0..c.hc_sinkhorn_iters) |iteration| {
         if (iteration != 0) for (0..4) |i| {
             const denominator = ((m.comb[i * 4] + m.comb[i * 4 + 2]) +
-                (m.comb[i * 4 + 1] + m.comb[i * 4 + 3])) + c.text_config.hc_eps;
+                (m.comb[i * 4 + 1] + m.comb[i * 4 + 3])) + c.hc_eps;
             for (0..4) |j| m.comb[i * 4 + j] /= denominator;
         };
         for (0..4) |j| {
             const denominator = ((m.comb[j] + m.comb[8 + j]) +
-                (m.comb[4 + j] + m.comb[12 + j])) + c.text_config.hc_eps;
+                (m.comb[4 + j] + m.comb[12 + j])) + c.hc_eps;
             for (0..4) |i| m.comb[i * 4 + j] /= denominator;
         }
     }
@@ -156,7 +156,7 @@ test "mHC split unary boundaries against the FP64 ideal on retained arguments" {
 
     const cb = queue.commandBuffer();
     const e = cb.compute(.serial);
-    mhc.encodeSplit(e, &p, h.view(mixes), h.view(inv), h.view(scale), h.view(base), h.view(pre), h.view(post), h.view(comb), .{ .rows = rows, .eps = cfg.text_config.hc_eps });
+    mhc.encodeSplit(e, &p, h.view(mixes), h.view(inv), h.view(scale), h.view(base), h.view(pre), h.view(post), h.view(comb), .{ .rows = rows, .eps = cfg.hc_eps });
     e.end();
     cb.commit();
     cb.wait();
@@ -179,8 +179,8 @@ test "mHC split unary boundaries against the FP64 ideal on retained arguments" {
             const m: []const f32 = mixes_host[r * h.mix_count ..][0..h.mix_count];
             var m64: [h.mix_count]f64 = undefined;
             for (m, 0..) |v, i| m64[i] = v;
-            const mix64 = math.splitOf(f64, &m64, 1.0, hc, cfg.text_config);
-            const mix32 = math.splitOf(f32, m, 1.0, hc, cfg.text_config);
+            const mix64 = math.splitOf(f64, &m64, 1.0, hc, cfg);
+            const mix32 = math.splitOf(f32, m, 1.0, hc, cfg);
             const src64: []const f64 = if (std.mem.eql(u8, stage.name, "pre")) &mix64.pre else if (std.mem.eql(u8, stage.name, "post")) &mix64.post else &mix64.comb;
             const src32: []const f32 = if (std.mem.eql(u8, stage.name, "pre")) &mix32.pre else if (std.mem.eql(u8, stage.name, "post")) &mix32.post else &mix32.comb;
             const metal: []const f32 = if (std.mem.eql(u8, stage.name, "pre")) pre.slice(f32, rows * 4)[r * 4 ..][0..4] else if (std.mem.eql(u8, stage.name, "post")) post.slice(f32, rows * 4)[r * 4 ..][0..4] else comb.slice(f32, rows * 16)[r * 16 ..][0..16];

@@ -41,7 +41,7 @@ pub fn runAttentionHistory(gpa: std.mem.Allocator, io: std.Io, model: *Model, tr
     if (token >= attention_math.max_capacity) return error.DiagnosticHistoryTooLarge;
     const prefix_elements = try std.math.mul(usize, token + 1, (layer + 1) * 5120);
     if (prefix_elements > (256 << 20) / @sizeOf(u16)) return error.DiagnosticHistoryTooLarge;
-    const cfg = model.cfg.text_config;
+    const cfg = model.cfg;
     const history_count = token + 1;
     const ratio = cfg.compress_ratios[layer];
     const compressed_rows = if (ratio == 0) 0 else history_count / ratio;
@@ -236,9 +236,9 @@ pub fn runAttentionHistory(gpa: std.mem.Allocator, io: std.Io, model: *Model, tr
         native_input_state.sparseHead(capture.row(.q)[head * 512 ..][0..512], native_window, helper_indices, sinks[head], same_input[head * 512 ..][0..512]);
     try attentionMetric(u16, gpa, &report, &count, "sparse_o", "same_native_query_window_compressed_cache_selection_reference_sparse_diagnostic", capture.row(.sparse_o), &same_input);
     try attentionWrite(gpa, io, dir, "attention-sparse-same-native-input-reference.bf16", std.mem.sliceAsBytes(&same_input));
-    math.rms(capture.row(.qr_projection), weights.q_norm, cfg.rms_norm_eps, same_input[0..1280]);
+    math.rms(capture.row(.qr_projection), weights.q_norm, cfg.eps, same_input[0..1280]);
     try attentionMetric(u16, gpa, &report, &count, "qr_norm", "same_native_input_reference_rms_diagnostic", capture.row(.qr_norm), same_input[0..1280]);
-    math.rms(capture.row(.kv_projection), weights.kv_norm, cfg.rms_norm_eps, same_input[0..512]);
+    math.rms(capture.row(.kv_projection), weights.kv_norm, cfg.eps, same_input[0..512]);
     try attentionMetric(u16, gpa, &report, &count, "kv_norm", "same_native_input_reference_rms_diagnostic", capture.row(.kv_norm), same_input[0..512]);
     @memcpy(&same_input, capture.row(.q_projection));
     for (0..64) |head| math.rope(same_input[head * 512 ..][0..512], token, ratio != 0, false, cfg);

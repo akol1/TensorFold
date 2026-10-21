@@ -39,7 +39,7 @@ const Pipelines = struct {
     attention: attention.Pipelines,
     groups: expert_groups.Pipelines,
 
-    fn init(device: mtl.Device, capacity: u32, c: config.Text) !Pipelines {
+    fn init(device: mtl.Device, capacity: u32, c: config.Config) !Pipelines {
         var ep = try exl3.Pipelines.load(device);
         errdefer ep.deinit();
         var op = try ops.Pipelines.load(device);
@@ -109,7 +109,7 @@ pub const Model = struct {
         const workspace_bytes = try std.math.add(usize, wp.bytes, attention.Workspace.bytes(o.chunk_rows));
         const cache_bytes = try std.math.add(usize, kp.residentBytes(), weights.sizeofDescriptors());
         const execution_bytes = try std.math.add(usize, workspace_bytes, cache_bytes);
-        const rotary_bytes = attention.Pipelines.residentBytes(capacity, c.text_config);
+        const rotary_bytes = attention.Pipelines.residentBytes(capacity, c);
         const needed = try std.math.add(usize, plan.bytes, try std.math.add(usize, execution_bytes, rotary_bytes));
         const device = try mtl.Device.init();
         errdefer device.deinit();
@@ -122,7 +122,7 @@ pub const Model = struct {
         const max_buffer = mtl.objc.msg(u64, device.id, "maxBufferLength", .{});
         for (plan.shards.items) |shard| if (shard.end - shard.begin > max_buffer) return error.ShardExceedsMetalBufferLimit;
         std.log.info("full resident admission: weights={d}, total={d}, context={d}, headroom={d}", .{ plan.bytes, needed, capacity, available - needed });
-        var pipelines = try Pipelines.init(device, capacity, c.text_config);
+        var pipelines = try Pipelines.init(device, capacity, c);
         errdefer pipelines.deinit();
         const queue = try device.queue();
         errdefer queue.deinit();
@@ -233,7 +233,7 @@ pub const Model = struct {
                 try engram.encodeGate(enc, &p.engram, .{ .q_weight = tensor(g.q_weight), .k_weight = tensor(g.k_weight), .dim = 5120, .copies = 4, .weight_dtype = switch (g.q_weight.dtype) {
                     .bf16 => .bf16,
                     else => .f32,
-                }, .hidden_stride = 20480, .kv_stride = 25600, .output_stride = 20480, .eps = m.cfg.text_config.rms_norm_eps }, ws.view(.stream), ws.view(.engram_kv), null, ws.view(.stream), rows);
+                }, .hidden_stride = 20480, .kv_stride = 25600, .output_stride = 20480, .eps = m.cfg.eps }, ws.view(.stream), ws.view(.engram_kv), null, ws.view(.stream), rows);
             }
             try m.profileSpan(&enc, .mhc);
             m.mixes(enc, layer.hc_attn, ws.view(.attention_pre), rows);
@@ -241,7 +241,7 @@ pub const Model = struct {
             enc.barrier();
             m.normalize(enc, ws.view(.collapsed), layer.attn_norm, ws.view(.normalized), rows);
             try m.profileSpan(&enc, .attention);
-            try attention.encode(&p.attention, enc, &layer.attn, &m.cache, &m.attention_workspace, ws.view(.normalized), ws.view(.branch), &p.projection, ws.projection(), @intCast(index), rows, m.cfg.text_config);
+            try attention.encode(&p.attention, enc, &layer.attn, &m.cache, &m.attention_workspace, ws.view(.normalized), ws.view(.branch), &p.projection, ws.projection(), @intCast(index), rows, m.cfg);
             enc.barrier();
             try m.profileSpan(&enc, .mhc);
             m.post(enc, rows);
@@ -291,16 +291,16 @@ pub const Model = struct {
     }
 
     fn normalize(m: *Model, enc: mtl.ComputeEncoder, x: View, w: checkpoint.Tensor, y: View, rows: u32) void {
-        ops.encodeRms(enc, &m.pipelines.ops, x, tensor(w), y, .{ .rows = rows, .width = 5120, .x_stride = 5120, .y_stride = 5120, .eps = m.cfg.text_config.rms_norm_eps });
+        ops.encodeRms(enc, &m.pipelines.ops, x, tensor(w), y, .{ .rows = rows, .width = 5120, .x_stride = 5120, .y_stride = 5120, .eps = m.cfg.eps });
         enc.barrier();
     }
 
     fn mixes(m: *Model, enc: mtl.ComputeEncoder, w: weights.Hc, pre: View, rows: u32) void {
         const ws = &m.workspace;
-        mhc.encodeRms(enc, &m.pipelines.mhc, ws.view(.stream), ws.view(.inv), .{ .rows = rows, .width = 5120, .stream_stride = 20480, .eps = m.cfg.text_config.rms_norm_eps });
+        mhc.encodeRms(enc, &m.pipelines.mhc, ws.view(.stream), ws.view(.inv), .{ .rows = rows, .width = 5120, .stream_stride = 20480, .eps = m.cfg.eps });
         ops.encodeDense(enc, &m.pipelines.ops, ws.view(.stream), tensor(w.projection), ws.view(.mixes), .{ .rows = rows, .k = 20480, .n = 24, .x_stride = 20480, .w_stride = 20480, .y_stride = 24, .w_dtype = .f32, .y_dtype = .f32 });
         enc.barrier();
-        mhc.encodeSplit(enc, &m.pipelines.mhc, ws.view(.mixes), ws.view(.inv), tensor(w.scale), tensor(w.base), pre, ws.view(.post), ws.view(.comb), .{ .rows = rows, .eps = m.cfg.text_config.hc_eps });
+        mhc.encodeSplit(enc, &m.pipelines.mhc, ws.view(.mixes), ws.view(.inv), tensor(w.scale), tensor(w.base), pre, ws.view(.post), ws.view(.comb), .{ .rows = rows, .eps = m.cfg.hc_eps });
         enc.barrier();
     }
 

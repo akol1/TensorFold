@@ -137,7 +137,7 @@ fn moeReferenceRows(model: *Model, layer: usize, input: []const u16, ids: *const
             try projection.apply(.{ .trellis = matrices[0] }, input, &rows.gate[slot], scratch);
             try projection.apply(.{ .trellis = matrices[1] }, input, &rows.up[slot], scratch);
         }
-        moe_reference.moeActivation(&rows.gate[slot], &rows.up[slot], if (slot == 6) 1 else routing[slot], model.cfg.text_config, &rows.activation[slot]);
+        moe_reference.moeActivation(&rows.gate[slot], &rows.up[slot], if (slot == 6) 1 else routing[slot], model.cfg, &rows.activation[slot]);
         // A shared or identical-weight expert result can be reused only when the BF16 input is identical.
         if (reuse != null and std.mem.eql(u16, &rows.activation[slot], &previous.?.activation[reuse.?])) {
             rows.down[slot] = previous.?.down[reuse.?];
@@ -290,17 +290,17 @@ pub fn runMoe(gpa: std.mem.Allocator, io: std.Io, model: *Model, snapshot: []con
     @memcpy(&native_ids, diagnosticRow(u32, model.workspace.view(.route_ids), 6));
     @memcpy(&native_weights, diagnosticRow(f32, model.workspace.view(.route_weights), 6));
     @memcpy(&native_logits_routing.logits, diagnosticRow(f32, model.workspace.view(.router_logits), 384));
-    moe_reference.moeSelect(model.weights.layers[layer].moe, model.cfg.text_config, &native_logits_routing.logits, &native_logits_routing.scores, &native_logits_routing.ids, &native_logits_routing.weights);
+    moe_reference.moeSelect(model.weights.layers[layer].moe, model.cfg, &native_logits_routing.logits, &native_logits_routing.scores, &native_logits_routing.ids, &native_logits_routing.weights);
     var source_routing: moe_reference.MoeRouting = .{};
     math.dense(model.weights.layers[layer].moe.gate, input_row, &source_routing.logits);
-    moe_reference.moeSelect(model.weights.layers[layer].moe, model.cfg.text_config, &source_routing.logits, &source_routing.scores, &source_routing.ids, &source_routing.weights);
+    moe_reference.moeSelect(model.weights.layers[layer].moe, model.cfg, &source_routing.logits, &source_routing.scores, &source_routing.ids, &source_routing.weights);
     try moeReferenceRows(model, layer, input_row, &source_routing.ids, &source_routing.weights, source, &scratch, null, null);
     try moeReferenceRows(model, layer, input_row, &native_ids, &native_weights, native_weights_reference, &scratch, source, &source_routing.ids);
     try moeReferenceRows(model, layer, input_row, &retained_ids, &retained_weights, retained_reference, &scratch, native_weights_reference, &native_ids);
     for (0..7) |slot| {
         native_inputs_reference.gate[slot] = native.gate[slot];
         native_inputs_reference.up[slot] = native.up[slot];
-        moe_reference.moeActivation(&native.gate[slot], &native.up[slot], if (slot == 6) 1 else native_weights[slot], model.cfg.text_config, &native_inputs_reference.activation[slot]);
+        moe_reference.moeActivation(&native.gate[slot], &native.up[slot], if (slot == 6) 1 else native_weights[slot], model.cfg, &native_inputs_reference.activation[slot]);
         // Deliberately use the captured native activation, not the preceding reference activation.
         if (std.mem.eql(u16, &native.activation[slot], &native_weights_reference.activation[slot])) {
             native_inputs_reference.down[slot] = native_weights_reference.down[slot];

@@ -328,14 +328,14 @@ test "FP32 Hadamard then FP16 and BF16 boundaries are deterministic" {
 }
 
 test "frozen FP32 rotation and output boundaries match the pre-repair oracle" {
-    // Frozen at 53b790082 (pre-repair): prepare, Hadamard and output narrowing are FP32, so words stay.
+    // Frozen from the repaired sign packing in b25c4a8ce: prepare, Hadamard and narrowing are FP32, so words stay.
     const f32m = Module(f32);
     const inputs = [_]f32{ 1, -1, 0x1p-24, 1 + 0x1p-7, 0x1.8p-24, -0x1p-7, 0x1p-8, 1 - 0x1p-7 };
     var x: [block_size]u16 = undefined;
     for (&x, 0..) |*word, i| word.* = f32m.bf16(inputs[i % inputs.len]);
-    var signs: [16]u8 = @splat(0);
+    var signs: [block_size / 8]u8 = @splat(0);
     for (0..block_size) |i| {
-        if (i % 3 == 1) signs[i / 16] |= @as(u8, 1) << @intCast(i % 16);
+        if (i % 3 == 1) signs[2 * (i / 16) + (i % 16) / 8] |= @as(u8, 1) << @intCast(i % 8);
     }
     var rotated: [block_size]f64 = undefined;
     f32m.prepare(&x, &signs, .packed_signs, &rotated);
@@ -352,11 +352,11 @@ test "frozen FP32 rotation and output boundaries match the pre-repair oracle" {
     }
     const frozen_rotation = [_]u16{
         0x3c3d, 0x1cf3, 0xb9b8, 0x3f16, 0x35cd, 0x398d, 0x91a8, 0x3c43,
-        0x35b6, 0x983e, 0x91a8, 0x35a5, 0x35a5, 0x91a8, 0x983e, 0x35b6,
+        0xb5b6, 0x183e, 0x11a8, 0xb5a5, 0xb5a5, 0x11a8, 0x183e, 0xb5b6,
     };
     const frozen_narrowed = [_]u16{
-        0x3f80, 0x3f81, 0xb982, 0x3f82, 0x3913, 0x3c02, 0x3b84, 0xbf80,
-        0xbf80, 0x3f81, 0xb982, 0xbf82, 0x3913, 0xbc04, 0xbb82, 0xbf80,
+        0x3f80, 0x3f81, 0xb982, 0x3f82, 0x3913, 0xbc00, 0x3b81, 0xbf80,
+        0x3f80, 0xbf81, 0x3809, 0x3f82, 0xb8cb, 0x3bfd, 0x3b84, 0x3f80,
     };
     try std.testing.expectEqualSlices(u16, &frozen_rotation, rotation[0..16]);
     try std.testing.expectEqualSlices(u16, &frozen_narrowed, narrowed[0..16]);

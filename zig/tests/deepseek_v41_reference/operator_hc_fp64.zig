@@ -186,9 +186,9 @@ fn StageRefOf(comptime T: type) type {
 
 fn referenceRow(comptime T: type, stream: []const u16, hc: Hc, cfg: Config, branch: []const u16, collapsed: *[width]u16, y: *[stream_width]u16) StageRefOf(T) {
     var out: StageRefOf(T) = undefined;
-    out.inv = math.inverseOf(T, stream, cfg.text_config.rms_norm_eps);
+    out.inv = math.inverseOf(T, stream, cfg.eps);
     math.denseOf(T, hc.projection, stream, &out.proj);
-    const mix = math.splitOf(T, &out.proj, out.inv, hc, cfg.text_config);
+    const mix = math.splitOf(T, &out.proj, out.inv, hc, cfg);
     out.pre = mix.pre;
     out.post = mix.post;
     out.comb = mix.comb;
@@ -246,10 +246,10 @@ pub fn runStage(
 ) !void {
     const cb = queue.commandBuffer();
     const e = cb.compute(.serial);
-    mhc.encodeRms(e, p, stream, inv, .{ .rows = rows, .width = width, .stream_stride = stream_width, .eps = cfg.text_config.rms_norm_eps });
+    mhc.encodeRms(e, p, stream, inv, .{ .rows = rows, .width = width, .stream_stride = stream_width, .eps = cfg.eps });
     ops.encodeDense(e, o, stream, weight, mixes, .{ .rows = rows, .k = stream_width, .n = mix_count, .x_stride = stream_width, .w_stride = stream_width, .y_stride = mix_count, .w_dtype = .f32, .y_dtype = .f32 });
     e.barrier();
-    mhc.encodeSplit(e, p, mixes, inv, scale, base, pre, post, comb, .{ .rows = rows, .eps = cfg.text_config.hc_eps });
+    mhc.encodeSplit(e, p, mixes, inv, scale, base, pre, post, comb, .{ .rows = rows, .eps = cfg.hc_eps });
     e.barrier();
     mhc.encodeCollapse(e, p, stream, pre, collapsed, .{ .rows = rows, .width = width, .stream_stride = stream_width, .y_stride = width });
     e.barrier();

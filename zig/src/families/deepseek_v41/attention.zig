@@ -43,20 +43,20 @@ pub const Pipelines = struct {
     rotary: rope.Pipelines,
     sparse: csa2.Pipelines,
 
-    pub fn load(device: mtl.Device, capacity: u32, c: config.Text) !Pipelines {
+    pub fn load(device: mtl.Device, capacity: u32, c: config.Config) !Pipelines {
         var plain = try ops.Pipelines.load(device);
         errdefer plain.deinit();
         var cache = try kv.Pipelines.load(device);
         errdefer cache.deinit();
         var select = try index.Pipelines.load(device);
         errdefer select.deinit();
-        var rotary = try rope.Pipelines.load(device, capacity, c.qk_rope_head_dim, .{ .theta = c.rope_theta, .original = 0 }, .{ .theta = c.compress_rope_theta, .factor = c.rope_scaling.factor, .original = c.rope_scaling.original_max_position_embeddings, .beta_fast = c.rope_scaling.beta_fast, .beta_slow = c.rope_scaling.beta_slow });
+        var rotary = try rope.Pipelines.load(device, capacity, c.rope_dim, .{ .theta = @floatCast(c.rope.theta), .original = 0 }, .{ .theta = @floatCast(c.rope.compress_theta), .factor = @floatCast(c.rope.factor), .original = @intCast(c.rope.original_max_positions), .beta_fast = @floatCast(c.rope.beta_fast), .beta_slow = @floatCast(c.rope.beta_slow) });
         errdefer rotary.deinit();
         const sparse = try csa2.Pipelines.load(device);
         return .{ .plain = plain, .cache = cache, .select = select, .rotary = rotary, .sparse = sparse };
     }
-    pub fn residentBytes(capacity: u32, c: config.Text) usize {
-        return rope.Pipelines.residentBytes(capacity, c.qk_rope_head_dim);
+    pub fn residentBytes(capacity: u32, c: config.Config) usize {
+        return rope.Pipelines.residentBytes(capacity, c.rope_dim);
     }
     pub fn registerResidency(p: *const Pipelines, set: mtl.ResidencySet) void {
         p.rotary.registerResidency(set);
@@ -137,8 +137,8 @@ fn norm(p: *const Pipelines, e: mtl.ComputeEncoder, x: View, weight: checkpoint.
     ops.encodeRms(e, &p.plain, x, tensor(weight), x, .{ .rows = rows, .width = width, .x_stride = width, .y_stride = width, .eps = eps, .weight_f32 = weight.dtype == .f32 });
     e.barrier();
 }
-fn rotate(p: *const Pipelines, e: mtl.ComputeEncoder, x: View, rows: u32, heads: u32, width: u32, position: u32, ratio: u32, step: u32, inverse: bool, c: config.Text) !void {
-    try p.rotary.encode(e, x, .{ .rows = rows, .heads = heads, .width = width, .rotary = c.qk_rope_head_dim, .stride = heads * width, .position = position, .step = step, .inverse = @intFromBool(inverse), .spectrum = if (ratio == 0) .normal else .compressed });
+fn rotate(p: *const Pipelines, e: mtl.ComputeEncoder, x: View, rows: u32, heads: u32, width: u32, position: u32, ratio: u32, step: u32, inverse: bool, c: config.Config) !void {
+    try p.rotary.encode(e, x, .{ .rows = rows, .heads = heads, .width = width, .rotary = c.rope_dim, .stride = heads * width, .position = position, .step = step, .inverse = @intFromBool(inverse), .spectrum = if (ratio == 0) .normal else .compressed });
 }
 fn precedingIndex(layer: u32) u32 {
     var source: u32 = 2;
@@ -152,36 +152,36 @@ fn precedingIndex(layer: u32) u32 {
 /// BF16 x/y [rows,5120]; layers 0..39 share the chunk-start cursor, appended by the caller after all layers.
 
 // No extra RMS after wq_b or index-query Hadamard outside EXL3.
-pub fn encode(p: *const Pipelines, e: mtl.ComputeEncoder, w: *const weights.Attention, state: *State, work: *Workspace, x: View, y: View, ep: *const exl3.Pipelines, scratch: exl3.View, layer: u32, rows: u32, c: config.Text) !void {
+pub fn encode(p: *const Pipelines, e: mtl.ComputeEncoder, w: *const weights.Attention, state: *State, work: *Workspace, x: View, y: View, ep: *const exl3.Pipelines, scratch: exl3.View, layer: u32, rows: u32, c: config.Config) !void {
     return encodeDiagnostic(p, e, w, state, work, x, y, ep, scratch, layer, rows, c, false, null);
 }
 
 /// Same encoder and arithmetic as encode, with optional copies at operator boundaries.
-pub fn encodeDiagnostic(p: *const Pipelines, e: mtl.ComputeEncoder, w: *const weights.Attention, state: *State, work: *Workspace, x: View, y: View, ep: *const exl3.Pipelines, scratch: exl3.View, layer: u32, rows: u32, c: config.Text, comptime diagnostic: bool, observer: ?DiagnosticObserver) !void {
+pub fn encodeDiagnostic(p: *const Pipelines, e: mtl.ComputeEncoder, w: *const weights.Attention, state: *State, work: *Workspace, x: View, y: View, ep: *const exl3.Pipelines, scratch: exl3.View, layer: u32, rows: u32, c: config.Config, comptime diagnostic: bool, observer: ?DiagnosticObserver) !void {
     if (layer >= 40 or rows == 0 or rows > work.max_rows or
         state.position > state.plan.capacity or rows > state.plan.capacity - state.position)
         return error.InvalidAttentionChunk;
     const position = state.position;
-    const ratio = c.compress_ratios[layer];
+    const ratio = c.compress_ratios.items()[layer];
     const end = position + rows;
-    const q_width = c.num_attention_heads * c.head_dim;
+    const q_width = c.heads * c.head_dim;
     const qr = work.view(.qr);
     const q = work.view(.query);
     const raw = work.view(.raw_kv);
     const ring = try state.ring(layer);
     const chunk = work.selection.windowChunk();
     e.barrier();
-    try projection(ep, e, .{ .trellis = w.wq_a }, x, qr, scratch, rows, c.hidden_size, c.q_lora_rank, .bf16);
+    try projection(ep, e, .{ .trellis = w.wq_a }, x, qr, scratch, rows, c.hidden, c.q_lora, .bf16);
     if (diagnostic) try DiagnosticObserver.observe(true, observer, e, .qr_projection, qr);
-    norm(p, e, qr, w.q_norm, rows, c.q_lora_rank, c.rms_norm_eps);
+    norm(p, e, qr, w.q_norm, rows, c.q_lora, c.eps);
     if (diagnostic) try DiagnosticObserver.observe(true, observer, e, .qr_norm, qr);
-    try projection(ep, e, .{ .trellis = w.wq_b }, qr, q, scratch, rows, c.q_lora_rank, q_width, .bf16);
+    try projection(ep, e, .{ .trellis = w.wq_b }, qr, q, scratch, rows, c.q_lora, q_width, .bf16);
     if (diagnostic) try DiagnosticObserver.observe(true, observer, e, .q_projection, q);
-    try rotate(p, e, q, rows, c.num_attention_heads, c.head_dim, position, ratio, 1, false, c);
+    try rotate(p, e, q, rows, c.heads, c.head_dim, position, ratio, 1, false, c);
     if (diagnostic) try DiagnosticObserver.observe(true, observer, e, .q, q);
-    try projection(ep, e, .{ .trellis = w.wkv }, x, raw, scratch, rows, c.hidden_size, c.head_dim, .bf16);
+    try projection(ep, e, .{ .trellis = w.wkv }, x, raw, scratch, rows, c.hidden, c.head_dim, .bf16);
     if (diagnostic) try DiagnosticObserver.observe(true, observer, e, .kv_projection, raw);
-    norm(p, e, raw, w.kv_norm, rows, c.head_dim, c.rms_norm_eps);
+    norm(p, e, raw, w.kv_norm, rows, c.head_dim, c.eps);
     if (diagnostic) try DiagnosticObserver.observe(true, observer, e, .kv_norm, raw);
     try rotate(p, e, raw, rows, 1, c.head_dim, position, ratio, 1, false, c);
     if (diagnostic) try DiagnosticObserver.observe(true, observer, e, .kv_rope, raw);
@@ -201,43 +201,43 @@ pub fn encodeDiagnostic(p: *const Pipelines, e: mtl.ComputeEncoder, w: *const we
             const output: exl3.Output = if (ratio == 1) .bf16 else .f32;
             const values = work.view(.values);
             const gates = work.view(.gates);
-            try projection(ep, e, compressor.wkv, x, values, scratch, rows, c.hidden_size, c.head_dim, output);
+            try projection(ep, e, compressor.wkv, x, values, scratch, rows, c.hidden, c.head_dim, output);
             if (ratio > 1) {
                 const gate = compressor.wgate orelse return error.MissingAttentionCompressorGate;
-                try projection(ep, e, gate, x, gates, scratch, rows, c.hidden_size, c.head_dim, .f32);
+                try projection(ep, e, gate, x, gates, scratch, rows, c.hidden, c.head_dim, .f32);
             }
-            try p.cache.encodePool(e, values, gates, source.partial, tensor(compressor.norm), latent, .{ .rows = rows, .ratio = ratio, .position = position, .stride = c.head_dim, .input_f32 = @intFromBool(ratio > 1), .eps = c.rms_norm_eps });
+            try p.cache.encodePool(e, values, gates, source.partial, tensor(compressor.norm), latent, .{ .rows = rows, .ratio = ratio, .position = position, .stride = c.head_dim, .input_f32 = @intFromBool(ratio > 1), .eps = c.eps });
             if (complete != 0) {
                 const selector = if (w.indexer) |*value| value else return error.MissingAttentionIndexer;
                 const wk = selector.wk orelse return error.MissingAttentionIndexKeyProjection;
                 const k_norm = selector.k_norm orelse return error.MissingAttentionIndexKeyNorm;
                 const key = work.view(.index_k);
-                try projection(ep, e, wk, latent, key, scratch, complete, c.head_dim, c.index_head_dim, .bf16);
-                norm(p, e, key, k_norm, complete, c.index_head_dim, c.rms_norm_eps);
-                try rotate(p, e, key, complete, 1, c.index_head_dim, position / ratio * ratio, ratio, ratio, false, c);
-                try p.cache.encodePack(e, key, source.index, .{ .rows = complete, .width = c.index_head_dim, .stride = c.index_head_dim, .packed_stride = kv.cache.index_stride, .block = 32, .kind = .index_fp4, .first = position / ratio });
+                try projection(ep, e, wk, latent, key, scratch, complete, c.head_dim, c.index_dim, .bf16);
+                norm(p, e, key, k_norm, complete, c.index_dim, c.eps);
+                try rotate(p, e, key, complete, 1, c.index_dim, position / ratio * ratio, ratio, ratio, false, c);
+                try p.cache.encodePack(e, key, source.index, .{ .rows = complete, .width = c.index_dim, .stride = c.index_dim, .packed_stride = kv.cache.index_stride, .block = 32, .kind = .index_fp4, .first = position / ratio });
             }
         }
         if (kv.cache.isIndexSource(layer)) {
             const selector = if (w.indexer) |*value| value else return error.MissingAttentionIndexer;
             const iq = work.view(.index_q);
             const iw = work.view(.index_weights);
-            const iq_width = c.index_n_heads * c.index_head_dim;
+            const iq_width = c.index_heads * c.index_dim;
             if (compressed_rows != 0) {
-                try projection(ep, e, selector.wq_b, qr, iq, scratch, rows, c.q_lora_rank, iq_width, .bf16);
-                try rotate(p, e, iq, rows, c.index_n_heads, c.index_head_dim, position, ratio, 1, false, c);
-                try p.cache.encodePack(e, iq, work.selection.queryPacked(), .{ .rows = rows * c.index_n_heads, .width = c.index_head_dim, .stride = c.index_head_dim, .packed_stride = kv.cache.index_stride, .block = 32, .kind = .index_fp4, .inplace = 1 });
-                ops.encodeDense(e, &p.plain, x, tensor(selector.weights_proj), iw, .{ .rows = rows, .k = c.hidden_size, .n = c.index_n_heads, .x_stride = c.hidden_size, .w_stride = c.hidden_size, .y_stride = c.index_n_heads, .w_dtype = switch (selector.weights_proj.dtype) {
+                try projection(ep, e, selector.wq_b, qr, iq, scratch, rows, c.q_lora, iq_width, .bf16);
+                try rotate(p, e, iq, rows, c.index_heads, c.index_dim, position, ratio, 1, false, c);
+                try p.cache.encodePack(e, iq, work.selection.queryPacked(), .{ .rows = rows * c.index_heads, .width = c.index_dim, .stride = c.index_dim, .packed_stride = kv.cache.index_stride, .block = 32, .kind = .index_fp4, .inplace = 1 });
+                ops.encodeDense(e, &p.plain, x, tensor(selector.weights_proj), iw, .{ .rows = rows, .k = c.hidden, .n = c.index_heads, .x_stride = c.hidden, .w_stride = c.hidden, .y_stride = c.index_heads, .w_dtype = switch (selector.weights_proj.dtype) {
                     .bf16 => .bf16,
                     else => .f16,
                 } });
                 e.barrier();
             }
-            const make_candidates = layer == c.candidate_source_layer_id;
-            const use_candidates = layer > c.candidate_source_layer_id;
+            const make_candidates = layer == c.candidate_source;
+            const use_candidates = layer > c.candidate_source;
             if (use_candidates and (work.candidate_position != position or work.candidate_rows != rows))
                 return error.MissingAttentionCandidates;
-            try p.select.encode(e, iq, iw, source.index, work.selection, .{ .rows = rows, .q_stride = iq_width, .weight_stride = c.index_n_heads, .position = position, .ratio = ratio, .keys = compressed_rows, .make_candidates = @intFromBool(make_candidates), .use_candidates = @intFromBool(use_candidates) });
+            try p.select.encode(e, iq, iw, source.index, work.selection, .{ .rows = rows, .q_stride = iq_width, .weight_stride = c.index_heads, .position = position, .ratio = ratio, .keys = compressed_rows, .make_candidates = @intFromBool(make_candidates), .use_candidates = @intFromBool(use_candidates) });
             work.selection_layer = layer;
             work.selection_position = position;
             work.selection_rows = rows;
@@ -257,15 +257,15 @@ pub fn encodeDiagnostic(p: *const Pipelines, e: mtl.ComputeEncoder, w: *const we
     e.barrier();
     if (diagnostic) try DiagnosticObserver.observe(true, observer, e, .sparse_o, q);
     try p.cache.publishWindow(e, chunk, ring, rows, position);
-    try rotate(p, e, q, rows, c.num_attention_heads, c.head_dim, position, ratio, 1, true, c);
+    try rotate(p, e, q, rows, c.heads, c.head_dim, position, ratio, 1, true, c);
     if (diagnostic) try DiagnosticObserver.observe(true, observer, e, .o, q);
     const grouped = work.view(.grouped);
     const group_input = q_width / c.o_groups;
-    const group_output = c.o_groups * c.o_lora_rank;
+    const group_output = c.o_groups * c.o_lora;
     for (w.wo_a, 0..) |matrix, group| {
-        try projection(ep, e, .{ .trellis = matrix }, q.shifted(group * group_input * 2), grouped.shifted(group * c.o_lora_rank * 2), scratch, rows, q_width, group_output, .bf16);
+        try projection(ep, e, .{ .trellis = matrix }, q.shifted(group * group_input * 2), grouped.shifted(group * c.o_lora * 2), scratch, rows, q_width, group_output, .bf16);
     }
     if (diagnostic) try DiagnosticObserver.observe(true, observer, e, .grouped, grouped);
-    try projection(ep, e, .{ .trellis = w.wo_b }, grouped, y, scratch, rows, group_output, c.hidden_size, .bf16);
+    try projection(ep, e, .{ .trellis = w.wo_b }, grouped, y, scratch, rows, group_output, c.hidden, .bf16);
     if (diagnostic) try DiagnosticObserver.observe(true, observer, e, .wo_b, y);
 }

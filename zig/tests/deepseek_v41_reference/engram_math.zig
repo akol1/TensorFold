@@ -4,7 +4,7 @@ const tf = @import("tensorfold");
 const m = @import("math.zig");
 const projection = @import("projection.zig");
 const Engram = tf.deepseek_v41_weights.Engram;
-const Config = tf.deepseek_v41_config.Text;
+const Config = tf.deepseek_v41_config.Config;
 const multipliers = [2][4]u64{
     .{ 76632096046245, 4839876093313, 35959672319349, 73987337458391 },
     .{ 67716810739261, 51510806800915, 30921347202721, 82619226485591 },
@@ -91,8 +91,8 @@ pub const State = struct {
             }
             const h_mean = m.meanFromWide(hh, 5120);
             const k_mean = m.meanFromWide(kk, 5120);
-            const h_inverse = m.idealRsqrt(h_mean + c.rms_norm_eps);
-            const k_inverse = m.idealRsqrt(k_mean + c.rms_norm_eps);
+            const h_inverse = m.idealRsqrt(h_mean + c.eps);
+            const k_inverse = m.idealRsqrt(k_mean + c.eps);
             const rstd: f32 = h_inverse * k_inverse;
             const dot_f32: f32 = @floatCast(dot);
             const normalized: f32 = (dot_f32 * rstd) * (1 / @sqrt(@as(f32, 5120)));

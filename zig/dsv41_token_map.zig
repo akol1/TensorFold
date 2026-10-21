@@ -1,5 +1,4 @@
-//! The Engram token map builder's command line: tf-dsv41-token-map --tokenizer PATH --config PATH --output PATH,
-//! and the same build the lane host runs when the map is missing and the original's tokenizer sits beside the tables.
+// The Engram token map builder's CLI; the lane host runs the same build to write a missing map.
 const std = @import("std");
 const tok = @import("src/core/tokenizer/tokenizer.zig");
 const unicode = @import("src/core/tokenizer/unicode.zig");

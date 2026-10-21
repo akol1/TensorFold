@@ -237,7 +237,8 @@ test "indexer scoring and selection sit at rounding level against the FP64 ideal
         }
         // Identical keys: every score is the same value, so the whole selection is tie-driven.
         if (std.mem.eql(u8, spec.name, "index_ties")) {
-            for (cells[128..], cells[0..128]) |*dst, src| dst.* = src;
+            // Broadcast row 0's 128 cells into every later row, so each key's slice is a copy of the first key's.
+            for (cells[128..], 0..) |*dst, i| dst.* = cells[i % 128];
         }
         // A score cliff just inside the selection boundary: half the keys sit on the boundary.
         if (std.mem.eql(u8, spec.name, "index_boundary")) {

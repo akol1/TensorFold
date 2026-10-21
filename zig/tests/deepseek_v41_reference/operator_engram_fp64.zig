@@ -6,7 +6,7 @@ const math = @import("math.zig");
 
 const engram = tf.deepseek_v41_engram;
 const hash = tf.deepseek_v41_engram_hash;
-const contract = tf.contract;
+const contract = @import("contract").spec;
 const View = engram.View;
 
 const dim: usize = 5120;

@@ -142,25 +142,41 @@ fn indexCase(
         scores_copy[best] = -std.math.inf(f32);
     }
     std.mem.sort(u32, reference_picks[0..picks], {}, std.sort.asc(u32));
-    var overlap: usize = 0;
     for (reference_picks[0..picks]) |at| chosen[at] = true;
+    // The reference's membership as its own set: `chosen` is built from `reference_picks`, so counting it is circular.
+    var reference_set = try std.testing.allocator.alloc(bool, spec.keys);
+    defer std.testing.allocator.free(reference_set);
+    @memset(reference_set, false);
+    for (reference_picks[0..picks]) |at| reference_set[at] = true;
+    // The selection boundary is the reference's, so it is read from the reference set alone.
     var min_selected: f32 = std.math.inf(f32);
     var max_unselected: f32 = -std.math.inf(f32);
     for (0..spec.keys) |row| {
         if (chosen[row]) {
-            overlap += 1;
             min_selected = @min(min_selected, ref32[row]);
         } else max_unselected = @max(max_unselected, ref32[row]);
     }
     var kernel_only: usize = 0;
     var out_of_range: usize = 0;
+    var repeated: usize = 0;
+    var kernel_seen = try std.testing.allocator.alloc(bool, spec.keys);
+    defer std.testing.allocator.free(kernel_seen);
+    @memset(kernel_seen, false);
     for (0..picks) |i| {
         const slot = kernel_positions[positions_offset + i];
         if (slot < 0 or slot >= @as(i32, @intCast(spec.keys))) {
             out_of_range += 1;
             continue;
         }
-        if (!chosen[@intCast(slot)]) kernel_only += 1;
+        const at: usize = @intCast(slot);
+        // The kernel's own set: a slot it returns twice selects fewer than `picks` distinct keys.
+        if (kernel_seen[at]) repeated += 1 else kernel_seen[at] = true;
+        if (!reference_set[at]) kernel_only += 1;
+    }
+    // Keys in the reference top-k the kernel did not return, counted over distinct kernel picks.
+    var reference_only: usize = 0;
+    for (reference_picks[0..picks]) |at| {
+        if (!kernel_seen[at]) reference_only += 1;
     }
     // Arithmetic noise selection absorbs: a pick is knife-edged at one score quantum of margin; else no 1-ULP flip.
     var exact_picks: [512]u32 = undefined;
@@ -195,8 +211,15 @@ fn indexCase(
         \\CSA64 {{"case":"{s}","stage":"index_select","side":"noise_tolerance","keys":{d},"picks":{d},"precision_flips":{d},"selection_margin":{d},"score_quantum":{d},"margin_in_quanta":{d:.1}}}
     , .{ spec.name, spec.keys, picks, flips, min_selected - max_unselected, quantum, margin_in_quanta });
     std.debug.print(
-        \\CSA64 {{"case":"{s}","stage":"index_select","side":"metal","keys":{d},"picks":{d},"reference_only":{d},"kernel_only":{d},"invalid_positions":{d},"lowest_selected":{d},"highest_unselected":{d}}}
-    , .{ spec.name, spec.keys, picks, picks - overlap, kernel_only, out_of_range, min_selected, max_unselected });
+        \\CSA64 {{"case":"{s}","stage":"index_select","side":"metal","keys":{d},"picks":{d},"reference_only":{d},"kernel_only":{d},"invalid_positions":{d},"repeated_picks":{d},"lowest_selected":{d},"highest_unselected":{d}}}
+    , .{ spec.name, spec.keys, picks, reference_only, kernel_only, out_of_range, repeated, min_selected, max_unselected });
+
+    // Selection gate: valid distinct positions, and any oracle flip only where the margin is under the quantum.
+    try std.testing.expectEqual(@as(usize, 0), out_of_range);
+    try std.testing.expectEqual(@as(usize, 0), repeated);
+    try std.testing.expectEqual(picks, picks - reference_only);
+    try std.testing.expectEqual(@as(usize, 0), kernel_only);
+    if (flips != 0) try std.testing.expect(margin_in_quanta < 2.0);
 }
 
 test "indexer scoring and selection sit at rounding level against the FP64 ideal" {

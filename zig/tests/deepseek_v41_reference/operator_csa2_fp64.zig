@@ -140,8 +140,21 @@ pub fn view(buffer: mtl.Buffer) View {
     return .{ .buffer = buffer };
 }
 
+/// One named pool case and the deltas it measured, kept so the test asserts after printing.
+const PoolCase = struct {
+    name: []const u8,
+    delta: PoolDelta,
+};
+
+/// The three comparisons a pool case owes, so the test can assert them rather than only printing them.
+pub const PoolDelta = struct {
+    metal: BfDelta,
+    f32_reference: BfDelta,
+    metal_vs_f32_reference: BfDelta,
+};
+
 /// One compressor-pool group: two projected ratio-2 positions, pooled then RMS-normed from FP32 wkv/wgate outputs.
-fn poolCase(device: mtl.Device, queue: mtl.Queue, p: *const kv.Pipelines, case_name: []const u8, values: []const f32, gates: []const f32, weight: []const u16) !void {
+fn poolCase(device: mtl.Device, queue: mtl.Queue, p: *const kv.Pipelines, case_name: []const u8, values: []const f32, gates: []const f32, weight: []const u16) !PoolDelta {
     var b = Buffers{ .device = device };
     defer b.deinit();
     const values_gpu = try b.get(f32, 2 * width);
@@ -178,15 +191,22 @@ fn poolCase(device: mtl.Device, queue: mtl.Queue, p: *const kv.Pipelines, case_n
     math.rmsOfValues(f64, &pooled64, &cells, eps, &ref64);
 
     const ideal = widenCells(&ref64);
-    var from_f32 = widenCells(&ref32);
+    const from_f32 = widenCells(&ref32);
     var magnitude: f64 = 0;
     for (ideal) |v| magnitude += v * v;
     std.debug.print(
         \\CSA64 {{"case":"{s}","stage":"pool","side":"scale","ideal_rms":{d}}}
     , .{ case_name, @sqrt(magnitude / @as(f64, width)) });
-    printBf(case_name, "pool", "metal", deltaBf16(metal, &ideal));
-    printBf(case_name, "pool", "f32_reference", deltaBf16(&ref32, &ideal));
-    printBf(case_name, "pool", "metal_vs_f32_reference", deltaBf16(metal, &from_f32));
+    // The three comparisons the pool stage owes; returned so the caller asserts them.
+    const measured: PoolDelta = .{
+        .metal = deltaBf16(metal, &ideal),
+        .f32_reference = deltaBf16(&ref32, &ideal),
+        .metal_vs_f32_reference = deltaBf16(metal, &from_f32),
+    };
+    printBf(case_name, "pool", "metal", measured.metal);
+    printBf(case_name, "pool", "f32_reference", measured.f32_reference);
+    printBf(case_name, "pool", "metal_vs_f32_reference", measured.metal_vs_f32_reference);
+    return measured;
 }
 
 fn widen(cells: []const f32) [width]f64 {
@@ -215,13 +235,16 @@ test "compressor pool stage sits at rounding level against the FP64 ideal" {
     defer p.deinit();
 
     var rng = Lcg{ .state = 0x9e3779b97f4a7c15 };
+    var cases: [6]PoolCase = undefined;
+    var case_count: usize = 0;
     // Case 1: typical magnitudes; gates straddle each other so the pool weights split.
     {
         const values = try gpa.alloc(f32, 2 * width);
         const gates = try gpa.alloc(f32, 2 * width);
         for (0..2 * width) |i| values[i] = rng.scale(1.0);
         for (0..2 * width) |i| gates[i] = rng.scale(8.0);
-        try poolCase(device, queue, &p, "typical", values, gates, try weightCells(gpa, &rng));
+        cases[case_count] = .{ .name = "typical", .delta = try poolCase(device, queue, &p, "typical", values, gates, try weightCells(gpa, &rng)) };
+        case_count += 1;
     }
     // Case 2: cancellation - the two pooled terms cancel to a few ULPs of the larger one.
     {
@@ -234,7 +257,8 @@ test "compressor pool stage sits at rounding level against the FP64 ideal" {
             values[width + d] = -large + rng.scale(0.001);
         }
         for (0..2 * width) |i| gates[i] = rng.scale(0.5);
-        try poolCase(device, queue, &p, "cancellation", values, gates, try weightCells(gpa, &rng));
+        cases[case_count] = .{ .name = "cancellation", .delta = try poolCase(device, queue, &p, "cancellation", values, gates, try weightCells(gpa, &rng)) };
+        case_count += 1;
     }
     // Case 3: wide dynamic range, so one slot dominates and the other is far below it.
     {
@@ -245,7 +269,8 @@ test "compressor pool stage sits at rounding level against the FP64 ideal" {
             values[i] = std.math.pow(f32, 2, exponent) * rng.uniform();
             gates[i] = rng.scale(3.0);
         }
-        try poolCase(device, queue, &p, "wide_range", values, gates, try weightCells(gpa, &rng));
+        cases[case_count] = .{ .name = "wide_range", .delta = try poolCase(device, queue, &p, "wide_range", values, gates, try weightCells(gpa, &rng)) };
+        case_count += 1;
     }
     // Case 4: deep cancellation, 1e-7 of the terms it cancels: FP32 error is a visible fraction.
     {
@@ -257,7 +282,8 @@ test "compressor pool stage sits at rounding level against the FP64 ideal" {
             values[width + d] = -large * (1 + rng.scale(1e-7));
         }
         for (0..2 * width) |i| gates[i] = rng.scale(0.5);
-        try poolCase(device, queue, &p, "cancel_1e7", values, gates, try weightCells(gpa, &rng));
+        cases[case_count] = .{ .name = "cancel_1e7", .delta = try poolCase(device, queue, &p, "cancel_1e7", values, gates, try weightCells(gpa, &rng)) };
+        case_count += 1;
     }
     // Case 5: gate skew that pushes one softmax weight into FP32 subnormal territory.
     {
@@ -269,7 +295,8 @@ test "compressor pool stage sits at rounding level against the FP64 ideal" {
             gates[d] = base;
             gates[width + d] = base - 85 - @as(f32, @floatFromInt(rng.next() % 8));
         }
-        try poolCase(device, queue, &p, "gate_skew", values, gates, try weightCells(gpa, &rng));
+        cases[case_count] = .{ .name = "gate_skew", .delta = try poolCase(device, queue, &p, "gate_skew", values, gates, try weightCells(gpa, &rng)) };
+        case_count += 1;
     }
     // Case 6: near-equal gates so the weights are both near one half, with large cancelling values.
     {
@@ -283,7 +310,19 @@ test "compressor pool stage sits at rounding level against the FP64 ideal" {
             gates[d] = rng.scale(0.01);
             gates[width + d] = rng.scale(0.01);
         }
-        try poolCase(device, queue, &p, "balanced_cancel", values, gates, try weightCells(gpa, &rng));
+        cases[case_count] = .{ .name = "balanced_cancel", .delta = try poolCase(device, queue, &p, "balanced_cancel", values, gates, try weightCells(gpa, &rng)) };
+        case_count += 1;
+    }
+
+    // Rounding-level gate: kernel and FP32 reference must both sit at BF16 cell granularity from the FP64 ideal.
+    try std.testing.expectEqual(@as(usize, 6), case_count);
+    for (cases) |case| {
+        try std.testing.expectEqual(width, case.delta.metal.count);
+        // Five cases match cell for cell; balanced_cancel leaves a few cells at 1.7e-5 NRMS, so 1e-3 holds both sides.
+        try std.testing.expect(case.delta.metal.nrms < 1e-3);
+        try std.testing.expect(case.delta.f32_reference.nrms < 1e-3);
+        // The kernel may not drift from the FP32 source contract by more than it drifts from the ideal.
+        try std.testing.expect(case.delta.metal_vs_f32_reference.nrms <= case.delta.metal.nrms + 1e-3);
     }
 }
 

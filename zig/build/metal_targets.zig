@@ -159,7 +159,14 @@ pub fn metalTargets(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
 
     // DeepSeek V4.1: the operator qualification steps registered beside the other families'.
     const dsv41_build = @import("deepseek_v41.zig");
-    test_step.dependOn(dsv41_build.weights(b, target, optimize, metal));
+    // The family reaches core through `@import("core")`; this facade owns exactly the files it names.
+    const core_root = b.createModule(.{ .root_source_file = b.path("zig/dsv41_core_family.zig"), .target = target, .optimize = optimize, .link_libc = true, .imports = &.{ .{ .name = "gpu_memory", .module = @import("gpu_memory.zig").module(b, target) }, .{ .name = "tokenizer", .module = tokenizer }, .{ .name = "metal", .module = metal } } });
+    test_step.dependOn(dsv41_build.weights(b, target, optimize, metal, core_root));
+
+    // Core's own tests run in one place: the V4.1 lanes name core, so those files cannot also be path-owned there.
+    const core_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("zig/src/core/root.zig"), .target = target, .optimize = optimize, .link_libc = true, .imports = &.{ .{ .name = "metal", .module = metal }, .{ .name = "gpu_memory", .module = @import("gpu_memory.zig").module(b, target) } } }) });
+    const core_step = b.step("test-core", "The shared core's own unit tests, rooted at core/root.zig");
+    core_step.dependOn(&b.addRunArtifact(core_tests).step);
 
     // The engines registry: the families this platform's binaries serve; the CLI reads it for models/info/pull.
     const api = b.createModule(.{ .root_source_file = b.path("zig/src/core/engine_api.zig"), .target = target, .optimize = optimize, .link_libc = true, .imports = &.{.{ .name = "lanes", .module = mods.lanes }} });
@@ -254,7 +261,7 @@ pub fn metalTargets(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     sources.addImport("nemotron_packed_metallib", embedded(b, packed_lib, "nemotron_packed.metallib"));
     const engine = mods.engine;
     {
-        const dsv41 = dsv41_build.checks(b, target, optimize, metal, sources, engine);
+        const dsv41 = dsv41_build.checks(b, target, optimize, metal, sources, engine, core_root);
         test_step.dependOn(dsv41.device);
         test_step.dependOn(dsv41.reference);
     }

@@ -1,7 +1,7 @@
 //! Family stage labels over the generic same-command-buffer counter recorder; no extra storage or GPU waits.
 const std = @import("std");
 const mtl = @import("metal");
-const counters = @import("../../core/gpu_counters.zig");
+const counters = @import("core").gpu_counters;
 
 pub const Stage = enum { engram, mhc, attention, moe, head, other };
 pub const stage_count = @typeInfo(Stage).@"enum".field_names.len;

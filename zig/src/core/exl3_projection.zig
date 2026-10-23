@@ -312,10 +312,12 @@ pub fn encodeDense(p: *const Pipelines, e: mtl.ComputeEncoder, m: DenseMatrix, x
     a.has_bias = @intFromBool(m.bias != null);
     const sums = View{ .buffer = scratch.buffer, .offset = scratch.offset + try rotatedBytes(m.k, r.count) };
     const sums_bytes = try std.math.mul(usize, try std.math.mul(usize, m.n, r.count), 4);
-    try readonly(m.weight, try std.math.mul(usize, try std.math.mul(usize, m.n, m.k), 2), y, 0, scratch, sums_bytes);
-    try readonly(m.suh, m.k * 2, y, 0, scratch, sums_bytes);
-    try readonly(m.svh, m.n * 2, y, 0, scratch, sums_bytes);
-    if (m.bias) |b| try readonly(b, m.n * 2, y, 0, scratch, sums_bytes);
+    // The dense path writes `y` too, so the borrowed regions are checked against its span rather than a zero.
+    const ybytes = try std.math.mul(usize, try std.math.mul(usize, r.count, r.y_stride), 2);
+    try readonly(m.weight, try std.math.mul(usize, try std.math.mul(usize, m.n, m.k), 2), y, ybytes, scratch, sums_bytes);
+    try readonly(m.suh, m.k * 2, y, ybytes, scratch, sums_bytes);
+    try readonly(m.svh, m.n * 2, y, ybytes, scratch, sums_bytes);
+    if (m.bias) |b| try readonly(b, m.n * 2, y, ybytes, scratch, sums_bytes);
     e.setPipeline(p.rotate_in);
     bind(e, x, 0);
     bind(e, m.suh, 1);

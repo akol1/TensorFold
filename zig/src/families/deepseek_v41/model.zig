@@ -229,7 +229,9 @@ pub const Model = struct {
                 try m.project(enc, g.wkv, ws.view(.engram_gather), ws.view(.engram_kv), rows, 6144, 25600, .bf16);
                 try engram.encodeGate(enc, &p.engram, .{ .q_weight = tensor(g.q_weight), .k_weight = tensor(g.k_weight), .dim = 5120, .copies = 4, .weight_dtype = switch (g.q_weight.dtype) {
                     .bf16 => .bf16,
-                    else => .f32,
+                    .f16 => .f16,
+                    .f32 => .f32,
+                    else => unreachable,
                 }, .hidden_stride = 20480, .kv_stride = 25600, .output_stride = 20480, .eps = m.cfg.text_config.rms_norm_eps }, ws.view(.stream), ws.view(.engram_kv), null, ws.view(.stream), rows);
             }
             try m.profileSpan(&enc, .mhc);

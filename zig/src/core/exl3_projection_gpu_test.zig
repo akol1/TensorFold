@@ -285,6 +285,34 @@ test "packed signs and GPU expert filtering preserve untouched output slots" {
     try std.testing.expectEqualSlices(u16, plain.slice(u16, 6 * n), filtered.slice(u16, 6 * n));
 }
 
+test "the dense projection checks its borrowed buffers against the output it writes" {
+    const device = try mtl.Device.init();
+    defer device.deinit();
+    const queue = try device.queue();
+    defer queue.deinit();
+    var p = try ex.Pipelines.load(device);
+    defer p.deinit();
+    const owned = try device.buffer(n * k * 2 + (k + n) * 2 + rows * (k + n) * 2, mtl.ResourceOptions.shared);
+    defer owned.deinit();
+    const scratch = try device.buffer(try ex.scratchBytes(k, n, rows), mtl.ResourceOptions.shared);
+    defer scratch.deinit();
+    const spans = @as(usize, n * k * 2);
+    const weight = ex.View{ .buffer = owned, .offset = 0 };
+    const suh = ex.View{ .buffer = owned, .offset = spans };
+    const svh = ex.View{ .buffer = owned, .offset = spans + k * 2 };
+    const xv = ex.View{ .buffer = owned, .offset = spans + (k + n) * 2 };
+    const yv = ex.View{ .buffer = owned, .offset = xv.offset + rows * k * 2 };
+    const sv = ex.View{ .buffer = scratch, .offset = 0 };
+    const r = ex.Rows{ .count = rows, .x_stride = k, .y_stride = n };
+    const cb = queue.commandBuffer();
+    const e = cb.compute(.concurrent);
+    // A weight or scale sharing the output's storage is read while `y` is written, so both are rejected.
+    const aliased = ex.DenseMatrix{ .weight = yv, .suh = suh, .svh = svh, .k = k, .n = n };
+    try std.testing.expectError(error.AliasedExl3View, ex.encodeDense(&p, e, aliased, xv, yv, sv, r));
+    try std.testing.expectError(error.AliasedExl3View, ex.encodeDense(&p, e, .{ .weight = weight, .suh = yv, .svh = svh, .k = k, .n = n }, xv, yv, sv, r));
+    try ex.encodeDense(&p, e, .{ .weight = weight, .suh = suh, .svh = svh, .k = k, .n = n }, xv, yv, sv, r);
+}
+
 test "rejected views leave an encoder reusable and successful output retains its guards" {
     const device = try mtl.Device.init();
     defer device.deinit();

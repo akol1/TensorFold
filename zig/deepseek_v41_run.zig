@@ -69,7 +69,7 @@ fn write(io: std.Io, a: std.mem.Allocator, dir: []const u8, name: []const u8, da
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = data });
 }
 const Counters = struct { disk_read: u64, pageins: u64, footprint: u64 };
-/// Darwin's rusage_info_v4 fields the runner reads around execution (page-ins, disk reads, footprint).
+/// Darwin's rusage_info_v4 in full: flavor 4 writes 296 bytes (uuid plus 35 u64 fields), so a shorter buffer overruns.
 const RUsage = extern struct {
     uuid: [16]u8,
     user_time: u64,
@@ -89,6 +89,13 @@ const RUsage = extern struct {
     child_pageins: u64,
     child_elapsed_abstime: u64,
     diskio_bytesread: u64,
+    /// The 18 fields after `diskio_bytesread`, carried so the struct spans all 296 bytes Darwin writes.
+    reserved: [18]u64,
+
+    comptime {
+        // The C interface fixes the size, so a shorter declaration is a build error rather than a silent overrun.
+        if (@sizeOf(RUsage) != 296) @compileError("RUsage must match Darwin's rusage_info_v4 (296 bytes)");
+    }
 };
 fn counters() !Counters {
     const proc_pid_rusage = struct {

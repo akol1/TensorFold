@@ -229,7 +229,9 @@ pub fn encodeDiagnostic(p: *const Pipelines, e: mtl.ComputeEncoder, w: *const we
                 try p.cache.encodePack(e, iq, work.selection.queryPacked(), .{ .rows = rows * c.index_n_heads, .width = c.index_head_dim, .stride = c.index_head_dim, .packed_stride = kv.cache.index_stride, .block = 32, .kind = .index_fp4, .inplace = 1 });
                 ops.encodeDense(e, &p.plain, x, tensor(selector.weights_proj), iw, .{ .rows = rows, .k = c.hidden_size, .n = c.index_n_heads, .x_stride = c.hidden_size, .w_stride = c.hidden_size, .y_stride = c.index_n_heads, .w_dtype = switch (selector.weights_proj.dtype) {
                     .bf16 => .bf16,
-                    else => .f16,
+                    .f16 => .f16,
+                    .f32 => .f32,
+                    else => unreachable,
                 } });
                 e.barrier();
             }

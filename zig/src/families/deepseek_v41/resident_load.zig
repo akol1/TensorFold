@@ -156,6 +156,13 @@ pub const Plan = struct {
             try out.own(buffer, bytes);
             owned = true;
             residency.add(buffer);
+            // Unwinding must deregister before `out.deinit` frees the buffer, or the set points at released storage.
+            var registered = false;
+            errdefer if (registered) {
+                residency.remove(buffer);
+                residency.commit();
+            };
+            registered = true;
             residency.commit();
             residency.requestResidency();
             var copied: usize = 0;

@@ -102,6 +102,12 @@ test {
     _ = @import("nvfp4_fixture_test.zig");
     _ = @import("drafter_release_test.zig");
     _ = kv_pool;
+    _ = @import("exl3_projection.zig");
+    _ = @import("exl3_projection_decode.zig");
+    _ = @import("gpu_counters.zig");
+    _ = @import("expert_groups.zig");
+    _ = @import("gpu_profile.zig");
+    _ = @import("safetensors_security_test.zig");
 }
 
 pub const frame_rounds = @import("frame_rounds.zig");

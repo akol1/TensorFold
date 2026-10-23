@@ -6,6 +6,7 @@ pub fn weights(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     metal: *std.Build.Module,
+    core: *std.Build.Module,
 ) *std.Build.Step {
     const host = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("zig/deepseek_v41_weights_checks.zig"),
@@ -14,6 +15,7 @@ pub fn weights(
         .link_libc = true,
         .imports = &.{
             .{ .name = "metal", .module = metal },
+            .{ .name = "core", .module = core },
         },
     }) });
     const step = b.step("test-deepseek-v41-weights", "V4.1 configuration, Engram table plans and resident weight staging");
@@ -28,6 +30,7 @@ pub fn checks(
     metal: *std.Build.Module,
     sources: *std.Build.Module,
     engine: *std.Build.Module,
+    core: *std.Build.Module,
 ) struct { device: *std.Build.Step, reference: *std.Build.Step } {
     const device = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("zig/deepseek_v41_checks.zig"),
@@ -37,6 +40,7 @@ pub fn checks(
         .imports = &.{
             .{ .name = "metal", .module = metal },
             .{ .name = "kernel_sources", .module = sources },
+            .{ .name = "core", .module = core },
         },
     }) });
     const device_step = b.step("test-deepseek-v41", "Experimental DS4.1 EXL3, Engram, mHC and sparse attention on Metal");

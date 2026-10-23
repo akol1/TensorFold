@@ -1,7 +1,7 @@
 //! Pinned DeepSeek V4.1 attention, resident EXL3 projections and causal packed-cache chunk execution.
 const mtl = @import("metal");
-const exl3 = @import("../../core/exl3_projection.zig");
-const checkpoint = @import("../../core/checkpoint_metal.zig");
+const exl3 = @import("core").exl3_projection;
+const checkpoint = @import("core").checkpoint_metal;
 const weights = @import("weights.zig");
 const config = @import("config.zig");
 const ops = @import("ops.zig");

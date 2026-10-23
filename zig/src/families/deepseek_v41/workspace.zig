@@ -1,10 +1,10 @@
 //! Fixed chunk-sized activations: no layer history or context-by-query score matrices.
 const std = @import("std");
 const mtl = @import("metal");
-const exl3 = @import("../../core/exl3_projection.zig");
+const exl3 = @import("core").exl3_projection;
 const View = @import("view.zig").View;
 const hash = @import("engram_hash.zig");
-const groups = @import("../../core/expert_groups.zig");
+const groups = @import("core").expert_groups;
 
 pub const Field = enum {
     ids,

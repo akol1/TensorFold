@@ -1,9 +1,9 @@
 //! Header-first resident loading: no mapped weights, deferred disk lookup or duplicate Engram projections.
 const std = @import("std");
 const mtl = @import("metal");
-const st = @import("../../core/safetensors.zig");
-const cp = @import("../../core/checkpoint_metal.zig");
-const paced = @import("../../core/paced_read.zig");
+const st = @import("core").safetensors;
+const cp = @import("core").checkpoint_metal;
+const paced = @import("core").paced_read;
 
 pub const Reference = struct { shard: usize, entry: st.Entry };
 pub const Shard = struct {

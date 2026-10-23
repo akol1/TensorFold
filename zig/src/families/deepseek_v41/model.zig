@@ -1,8 +1,8 @@
 //! Plain V4.1 execution over resident EXL3 weights and source-owned packed caches.
 const std = @import("std");
 const mtl = @import("metal");
-const checkpoint = @import("../../core/checkpoint_metal.zig");
-const exl3 = @import("../../core/exl3_projection.zig");
+const checkpoint = @import("core").checkpoint_metal;
+const exl3 = @import("core").exl3_projection;
 const config = @import("config.zig");
 const load = @import("load.zig");
 const weights = @import("weights.zig");
@@ -18,7 +18,7 @@ const route = @import("route.zig");
 const engram = @import("engram.zig");
 const View = @import("view.zig").View;
 const gpu_counters = @import("profiler.zig");
-const expert_groups = @import("../../core/expert_groups.zig");
+const expert_groups = @import("core").expert_groups;
 
 pub const prefill_step = 256;
 pub const Logits = enum { none, last, all };

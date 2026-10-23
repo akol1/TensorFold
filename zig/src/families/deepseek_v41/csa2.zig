@@ -71,7 +71,3 @@ pub const Pipelines = struct {
         enc.dispatchGroups(mtl.Size.of(args.heads, args.rows, 1), mtl.Size.of(32, 1, 1));
     }
 };
-
-test {
-    _ = @import("kv_test.zig");
-}

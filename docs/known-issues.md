@@ -37,7 +37,17 @@ release fixes it, and the release notes say which one.
   since 1.0.10's faster products. `FZ_M3_LANES=1` keeps the earlier kernels and their tokens.
 - @Bizuayeu's regression run on shipped 1.1.0 loaded the whole GLM-5.3-Flash NVFP4 checkpoint on two GB10s at TP=2 in 302.1 s, kept one token hash per prompt across three runs and found a passphrase in 199,307 tokens; scored prompts and more than two ranks were not covered ([#1040](https://github.com/ashhart/TensorFold/issues/1040)).
 - DeepSeek-V4.1 CUDA pieces land in this release, but no release binary serves DeepSeek checkpoints until its whole-model gate ([#827](https://github.com/ashhart/TensorFold/pull/827)) passes.
-
+- Qwen3.8-27B in speed-up mode, two Macs over Thunderbolt: a pair serves one greedy stream, drafts nothing, keeps no
+  prompt cache and does not learn, because rank 1 has no drafter checkpoint and each Mac holds only its own halves of a
+  slot's state. `--drafter`, `--prompt-cache-gib`, `--learn` and `--parallel` above 1 are refused, and a request that
+  samples or carries a grammar fails.
+- Qwen3.8-27B in speed-up mode, two candidates whose seam sums land within one bf16 ulp of each other: the order the two
+  Macs add their halves can decide between them, so a reply can differ from the single Mac's by one token and in the text
+  after it. Seen twice. In the `n4-hi` raw-id case (ids `[124160,124161,124162,124163]`, 4 rows, 8 tokens) the single
+  host's last token is `98135` and the pair's is `135917`. In the chat fixture at 256 tokens the single host takes `17077`
+  with a 0.125 logit lead over `369`, the split sum makes the two logits equal and the lower id `369` wins at token 236,
+  so the reply parts from there. A difference is accepted only between the same two contenders when both margins are
+  inside that gap; every other difference must match. The code-128, code-256 and chat-128 fixtures are bit-identical.
 
 ## Living Weights (`--slide`)
 

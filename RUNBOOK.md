@@ -277,6 +277,12 @@ Each settings file names `rank`, `library` and `links`; each link names its peer
 [Speed-up settings](docs/speed-up-mode.md#4-write-the-settings-files) has the schema and link setup.
 That guide's two-Mac Flash Next commands load the checkpoint directly, as one Mac does.
 
+Qwen3.8-27B serves the same way: the same `$HOME/models/qwen3.8-27b` checkpoint on both Macs, one settings file per rank, rank 1 started first and rank 0 within five minutes, with `--parallel 1` because a pair serves one greedy stream.
+Send requests to rank 0 only, and expect no drafter, no prompt cache and no learning: `--drafter`, `--prompt-cache-gib` and `--learn` are refused on a pair.
+Each rank waits up to five minutes for the other's ready word, then exits with `the peer never signalled ready in five minutes`.
+When rank 0 stops, rank 1 stops following but keeps running until you end it, and it exits by itself only when it cannot replay a round, so restart both after a link failure: that fails the request in flight and leaves the pair down until both ranks run again.
+[Qwen3.8-27B on two Macs](docs/recipes/qwen3.8-27b.md#two-macs-over-thunderbolt) has the commands and what the split covers.
+
 On one Mac, GLM loads only when its weights and caches fit in 70% of RAM, 179.2 GB on a 256 GB Mac, and leaves the MTP head on disk when only the head is over.
 `GLM_LOAD_LIMIT_GB=N` sets that limit in GB, up to the GPU's recommended working set; a value that isn't a number above 0 stops the server.
 Past 70% of RAM the server warns at startup: a load that wires most of the RAM can stall macOS until its watchdog restarts the Mac, so run nothing else large beside it.

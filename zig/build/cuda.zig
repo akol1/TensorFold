@@ -125,6 +125,9 @@ pub fn targets(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
     q35.addImport("core", mods.core);
     q35.addImport("qwen35", mods.qwen35);
     b.installArtifact(b.addExecutable(.{ .name = "tf-qwen35-cuda", .root_module = q35 }));
+    // tf-qwen35-score: selected-token logprobs under a full-vocabulary log-sum-exp, a prompt's chunks fixed in size
+    const q35_score = b.createModule(.{ .root_source_file = b.path("zig/qwen35_score.zig"), .target = target, .optimize = optimize, .link_libc = true, .strip = strip, .imports = &.{ .{ .name = "cuda", .module = cuda }, .{ .name = "qwen35", .module = mods.qwen35 } } });
+    b.installArtifact(b.addExecutable(.{ .name = "tf-qwen35-score", .root_module = q35_score }));
     const d3_tool = b.createModule(.{ .root_source_file = b.path("zig/src/families/drama3/generate.zig"), .target = target, .optimize = optimize, .link_libc = true, .imports = &.{ .{ .name = "core", .module = mods.core }, .{ .name = "drama3", .module = @import("drama3_host.zig").module(b, target, optimize, cuda, mods.core) } } });
     const d3_exe = b.addExecutable(.{ .name = "drama3-generate", .root_module = d3_tool });
     b.step("drama3-generate", "Drama generation and replay controls on CUDA").dependOn(&b.addInstallArtifact(d3_exe, .{}).step);

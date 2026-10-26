@@ -2,6 +2,8 @@
 const CudaRecord = @import("registry.zig").CudaRecord;
 const none = @import("registry.zig").none;
 pub const records = [_]CudaRecord{
+    // Ours: a row's log-sum-exp, argmax and selected logits, one block a row; its usage waits on an SM we serve.
+    .{ .launch = .{ .name = "qwen35_scores tf_q35_score_stats", .symbol = "tf_q35_score_stats", .image = "qwen35_scores", .threads = 256 }, .usage = none },
     .{ .launch = .{ .name = "qwen35 tf_q35_attn_partial_legacy", .symbol = "tf_q35_attn_partial_legacy", .image = "qwen35", .threads = 1024 }, .usage = none },
     .{ .launch = .{ .name = "qwen35_kv8 tf_q35_attn_partial8_legacy", .symbol = "tf_q35_attn_partial8_legacy", .image = "qwen35_kv8", .threads = 1024 }, .usage = none },
     .{ .launch = .{ .name = "qwen35 tf_q35_gdn_slots_1", .symbol = "tf_q35_gdn_slots_1", .image = "qwen35", .threads = 128 }, .usage = .{ .{ .regs = 64, .static = 4096, .bound = 128 }, .{ .regs = 63, .static = 4096, .bound = 128 }, .{ .regs = 63, .static = 4096, .bound = 128 }, .{ .regs = 64, .static = 4096, .bound = 128 }, .{ .regs = 64, .static = 4096, .bound = 128 } }, .later_pending = true },
@@ -66,6 +68,7 @@ test "five-SM receipts qualify measured CUDA lanes and keep awaiting launches fa
         .{ "tf_q35_attn_partial8_contiguous", {} },
         .{ "tf_q35_attn_partial", {} },
         .{ "tf_q35_attn_partial8", {} },
+        .{ "tf_q35_score_stats", {} }, // ours: waits on compiled usage from a device of each SM we serve
     });
     for (records) |r| {
         if (awaiting.has(r.launch.symbol) and std.meta.eql(none, r.usage)) {

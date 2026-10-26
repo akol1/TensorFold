@@ -435,7 +435,7 @@ pub const Engine = struct {
         // the tables
         const st = e.staged.bytes;
         @memcpy(std.mem.bytesAsSlice(u32, st[ids_at..][0 .. total * 4]), ids);
-        @memset(st[ids_at + total * 4 .. ids_at + max_rows * 4], 0); // a bucket's padding rows read token 0
+        @memset(st[ids_at..][total * 4 .. max_rows * 4], 0); // a bucket's padding rows read token 0
         const segs = std.mem.bytesAsSlice(Seg, st[segs_at..][0 .. parts.len * @sizeOf(Seg)]);
         const slot_peak = try Round.build(st, parts, record);
         for (parts) |p| {

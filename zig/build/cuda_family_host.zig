@@ -33,6 +33,10 @@ pub fn steps(b: *std.Build, cuda: *std.Build.Module, mods: anytype, step: *std.B
     const proposal_rows = b.createModule(.{ .root_source_file = b.path("zig/proposal_rows_host.zig"), .target = host, .optimize = .debug, .link_libc = true, .imports = &.{.{ .name = "core", .module = mods.core }} });
     b.step("test-proposal-rows-host", "Exact stored proposal rows, padding, mapping and refusal").dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = proposal_rows, .filters = &.{"proposal rows:"} })).step);
     b.step("test-proposal-head-cuda-host", "Common proposal projection and keyed draw recording without devices").dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = cuda, .filters = &.{"proposal rows:"} })).step);
+    const score_stats = b.createModule(.{ .root_source_file = b.path("zig/qwen35_scores_host.zig"), .target = host, .optimize = .debug, .link_libc = true, .imports = &.{.{ .name = "cuda", .module = cuda }} });
+    const score_stats_step = b.step("test-qwen35-scores-host", "A row's score stats layout and the labels a block reads, without devices");
+    score_stats_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = score_stats })).step);
+    step.dependOn(score_stats_step);
     const proposal_metal = b.createModule(.{ .root_source_file = b.path("zig/src/metal/metal.zig"), .target = host, .optimize = .debug, .link_libc = true });
     const proposal_affine = b.createModule(.{ .root_source_file = b.path("zig/src/core/affine_mm.zig"), .target = host, .optimize = .debug, .imports = &.{.{ .name = "metal", .module = proposal_metal }} });
     const proposal_encoder = b.createModule(.{ .root_source_file = b.path("zig/proposal_metal_host.zig"), .target = host, .optimize = .debug, .imports = &.{ .{ .name = "metal", .module = proposal_metal }, .{ .name = "core", .module = mods.core }, .{ .name = "affine_mm", .module = proposal_affine } } });

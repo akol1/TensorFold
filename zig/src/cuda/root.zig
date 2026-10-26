@@ -158,3 +158,4 @@ test {
     _ = @import("graph_instantiate_failure_test.zig");
 }
 pub const qwen35_bf16_rows = @import("qwen35_bf16_rows.zig");
+pub const qwen35_scores = @import("qwen35_scores.zig");

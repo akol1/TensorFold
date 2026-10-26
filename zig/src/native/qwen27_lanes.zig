@@ -16,11 +16,19 @@ const Ring = q.tap_ring.Ring;
 const Context = q.dflash.runtime_model.Context;
 const Landing = @import("qwen27_landing.zig").Landing;
 const contract = tf.tree_round;
+const pair_mod = @import("qwen27_pair.zig");
+
+/// The pair transport's types and seam ABI, in their own unit: the lane backend and the link's adapter share them.
+pub const Pair = pair_mod.Pair;
+pub const Kind = pair_mod.Kind;
+pub const Link = pair_mod.Link;
+pub const batch_rows = pair_mod.batch_rows;
+pub const pairReduce = pair_mod.pairReduce;
+pub const pairBytes = pair_mod.pairBytes;
 
 /// A window's rows at most: the pending row and a DFlash2 tree.
 pub const max_rows = 16;
-/// A shared round's rows at most: the frame's.
-pub const batch_rows = 128;
+
 /// Streams a runner holds at most (the attention plan's).
 pub const max_streams = q.attention_plan.max_streams;
 const ring = 64;
@@ -73,6 +81,7 @@ pub const Metal = struct {
     fills: std.AutoHashMapUnmanaged(*lanes.Stream, slots.Fill) = .empty, // prompt passes the lane host runs by chunks
     image_fill: ?*const lanes.Stream = null, // the pass whose images the vision rows hold, until it closes
     promote_due: bool = false, // slot 0 freed: a stream moves in at the next backend call (slots.promoteDue)
+    link: ?*Link = null, // the pair: rank 0 sends each round here before it runs, rank 1 replays it
 
     pub fn init(gpa: std.mem.Allocator, runner: *q.decode_round.Runner, draft: ?*Draft) !*Metal {
         if (runner.slots == 0 or runner.slots > max_streams or runner.model.frame.capacity < batch_rows) return error.TargetBinding;
@@ -122,7 +131,7 @@ pub const Metal = struct {
     const ringChunk = slots.ringChunk;
     const unbind = slots.unbind;
     const ready = slots.ready;
-    const refill = slots.refill;
+    pub const refill = slots.refill;
 
     pub fn backend(b: *Metal) be.Backend {
         return .{ .ptr = b, .vtable = &.{ .prefill = prefillFn, .prefill_step = slots.prefillStep, .cancel_prefill = slots.cancelPrefill, .first = firstFn, .first_masked = firstMaskedFn, .queue = queueFn, .read = readFn, .verify = verifyFn, .keep = keepFn, .draft = draft_fns.draftFn, .probabilities = draft_fns.probabilitiesFn, .tree = draft_fns.treeFn, .release = releaseFn, .reports_fill = true } };
@@ -161,66 +170,9 @@ pub const Metal = struct {
         return slot < b.draft_slots and live <= b.draft_slots and x.caches.len > 0;
     }
 
-    /// Each window width's ms (verify, draws, keep) on a scratch context in slot 0; resets it. Kept per build.
+    /// Each window width's ms on a scratch slot 0, kept per build: warm.measure, for the A/B tool.
     pub fn measure(b: *Metal, io: std.Io) !void {
-        const r = b.runner;
-        if (b.owners[0] != null or r.active != null) return error.StreamBusy;
-        var shape: [128]u8 = undefined;
-        const parts = [_][]const u8{ "qwen27-lanes", std.mem.span(r.model.device.name()), try q.widths.costShape(r.model.config, r.model.widths_tag, &shape, max_rows, b.draft != null) };
-        const k = lanes.cost_cache.key(b.gpa, io, &parts) catch null;
-        if (k) |key| if (lanes.cost_cache.load([max_rows]lanes.config.Cost, b.gpa, io, key)) |kept| {
-            b.costs = kept;
-            b.timed = max_rows;
-            return;
-        };
-        if (r.capacity <= max_rows) return error.ContextFull;
-        defer {
-            if (b.draft) |d| d.reset() catch {} else r.reset(0) catch {};
-        }
-        var ids: [192]u32 = undefined;
-        for (&ids, 0..) |*t, i| t.* = @intCast((i * 7919 + 13) % r.model.config.vocab);
-        const prompt = ids[0..@min(ids.len, r.capacity - max_rows)]; // a small --context still holds a window past it
-        try b.refill(prompt);
-        var s = try lanes.Stream.init(b.gpa, .{ .id = "timing", .prompt = prompt, .max_new = 1 });
-        defer s.deinit(b.gpa);
-        const timer: WindowTimer = .{ .b = b, .s = &s, .prompt = prompt };
-        for (0..5) |_| _ = try timer.time(max_rows - 1); // the widest window first, while the GPU's clocks ramp up
-        var ms: [max_rows]f64 = undefined;
-        for (&ms, 0..) |*m, i| m.* = try lanes.cost_rule.fastest(timer, i);
-        try lanes.cost_rule.smooth(timer, &ms);
-        const ref = lanes.cost_cache.referenceKey(&parts);
-        if (lanes.cost_cache.load([max_rows]f64, b.gpa, io, ref)) |reference| if (lanes.cost_rule.drifted(&ms, &reference)) try lanes.cost_rule.again(timer, &ms);
-        for (&b.costs, ms, 0..) |*cost, m, i| cost.* = .{ .width = @intCast(i + 1), .ms = m };
-        b.timed = max_rows;
-        if (k) |key| lanes.cost_cache.save([max_rows]lanes.config.Cost, b.gpa, io, key, b.costs);
-        lanes.cost_cache.save([max_rows]f64, b.gpa, io, ref, ms);
-    }
-
-    /// Window entry `i` is `i + 1` rows, timed once; each keeps a row, so a full slot is refilled first.
-    const WindowTimer = struct {
-        b: *Metal,
-        s: *lanes.Stream,
-        prompt: []const u32,
-        pub fn time(t: WindowTimer, i: usize) !f64 {
-            if (t.b.runner.offsets[0] + i + 1 > t.b.runner.capacity) try t.b.refill(t.prompt);
-            return t.b.timeWindow(t.s, i + 1);
-        }
-    };
-
-    fn timeWindow(b: *Metal, s: *lanes.Stream, rows: usize) !f64 {
-        const t0 = mtl.clock.seconds();
-        const positions: [max_rows]u64 = @splat(0);
-        const drafts: [max_rows]u32 = @splat(1);
-        var sampled: [max_rows]u32 = undefined;
-        var echoed: [max_rows]u32 = undefined;
-        b.owners[0] = s;
-        defer b.owners[0] = null;
-        const w = be.Window{ .stream = s, .pending = 0, .held = 0, .tokens = drafts[0 .. rows - 1], .parents = null, .positions = positions[0..rows] };
-        var out = [_]be.Verified{.{ .sampled = sampled[0..rows], .drafts = echoed[0 .. rows - 1] }};
-        try verifyFn(b, &.{w}, &out);
-        var path = [_]u32{0};
-        try b.keepPaths(&.{&path});
-        return (mtl.clock.seconds() - t0) * 1e3;
+        return @import("qwen27_warm.zig").measure(b, io);
     }
 
     pub fn self(ptr: *anyopaque) *Metal {
@@ -268,6 +220,8 @@ pub const Metal = struct {
 
     /// Logits rows [first, first + rows) drawn at their positions: argmax on the GPU, or the stream's keyed sampler.
     fn draw(b: *Metal, s: *const lanes.Stream, first: usize, rows: usize, positions: []const u64, out: []u32, masks: []const u32) !void {
+        // a pair's token comes from the round's own head seam: a second local argmax would decide differently on rank 1
+        if (b.runner.reduce != null) return error.PairGreedyOnly;
         const logits = b.runner.model.frame.get(.logits);
         const vocab: u32 = @intCast(b.runner.model.config.vocab);
         const width = (@as(usize, vocab) + 31) / 32;
@@ -306,6 +260,16 @@ pub const Metal = struct {
 
     /// The tokens argmaxRows picked for rows [first, first + rows).
     fn picked(b: *const Metal, first: usize, rows: usize, out: []u32) !void {
+        if (b.runner.reduce != null) {
+            const seam_picks = b.runner.picks orelse return error.HeadSeamMissing;
+            const vocab: u32 = @intCast(b.runner.model.shard.global.vocab);
+            const ids: [*]const u32 = @ptrCast(@alignCast(seam_picks.buffer.contents() + seam_picks.offset));
+            for (out[0..rows], ids[first..][0..rows]) |*t, id| {
+                if (id >= vocab) return error.NonfiniteLogits;
+                t.* = id;
+            }
+            return;
+        }
         const picks: [*]const contract.Pick = @ptrCast(@alignCast(b.picks.contents()));
         for (out[0..rows], picks[first..][0..rows]) |*t, p| {
             if (p.token == contract.invalid_token or p.nonfinite != 0) return error.NonfiniteLogits;
@@ -314,7 +278,7 @@ pub const Metal = struct {
     }
 
     /// Keep the last verify's rows on `paths`: slot 0 alone keeps on the GPU with its taps, else the runner and rings.
-    fn keepPaths(b: *Metal, paths: []const []const u32) !void {
+    pub fn keepPaths(b: *Metal, paths: []const []const u32) !void {
         defer b.dropRound();
         if (paths.len != b.count) return error.NothingToKeep;
         if (b.advanced) { // the verify kept each window's one row at its position; its logits already sit in row 0
@@ -433,6 +397,11 @@ pub const Metal = struct {
         const b = self(ptr);
         _ = try b.slotFor(s);
         var token: [1]u32 = undefined;
+        if (b.runner.reduce != null) {
+            // the prompt's last chunk (head = .last) picked on both ranks: no second round, no unannounced exchange
+            try b.picked(0, 1, &token);
+            return b.push(token[0]);
+        }
         try b.draw(s, 0, 1, &.{position}, &token, &.{});
         return b.push(token[0]);
     }
@@ -465,7 +434,7 @@ pub const Metal = struct {
     }
 
     /// Every stream's window (pending token, then its drafts as a chain or tree) in one forward, every row drawn.
-    fn verifyFn(ptr: *anyopaque, windows: []const be.Window, out: []be.Verified) anyerror!void {
+    pub fn verifyFn(ptr: *anyopaque, windows: []const be.Window, out: []be.Verified) anyerror!void {
         const b = self(ptr);
         if (windows.len == 0 or windows.len > b.runner.slots or windows.len != out.len) return error.BadWindows;
         try b.settle();
@@ -501,16 +470,22 @@ pub const Metal = struct {
         if (windows.len > 1) b.dropTree();
         const pool = mtl.objc.Pool.push();
         defer pool.pop();
-        b.round = try Round.init(b.gpa, inputs[0..windows.len], @intCast(r.model.config.conv_kernel), r.slots, @intCast(r.model.config.vocab));
+        // Ids are global on every rank (only the head's rows are split), so the round validates the whole vocabulary.
+        b.round = try Round.init(b.gpa, inputs[0..windows.len], @intCast(r.model.config.conv_kernel), r.slots, @intCast(r.model.shard.global.vocab));
         b.count = windows.len;
         errdefer b.dropRound();
+        if (b.runner.reduce != null) {
+            // landing 1 is one greedy stream of one-row windows: the words are the slot and the pending token.
+            if (windows.len != 1 or total != 1) return error.CommandOutOfStep;
+            if (b.link) |l| try l.step(inputs[0].slot, b.ids[0]);
+        }
         if (plain) try r.advance(&b.round.?, .all) else try r.verifyHead(&b.round.?, .all);
         b.advanced = plain;
         b.rows = total;
         // every greedy window's rows from one argmax over the round; a sampled window draws on the host
         var greedy = false;
         for (windows) |w| greedy = greedy or (w.stream.sampling == null and w.masks.len == 0);
-        if (greedy) try b.argmaxRows(0, total);
+        if (greedy and b.runner.reduce == null) try b.argmaxRows(0, total);
         for (windows, out, b.round.?.firsts) |w, o, first| {
             const rows = w.rows();
             if (w.stream.sampling != null or w.masks.len > 0) try b.draw(w.stream, first, rows, w.positions, o.sampled, w.masks) else try b.picked(first, rows, o.sampled);
@@ -579,8 +554,10 @@ pub const Metal = struct {
     }
 
     fn releaseFn(ptr: *anyopaque, s: *lanes.Stream) void {
-        slots.endFill(self(ptr), s);
-        self(ptr).unbind(s);
+        const b = self(ptr);
+        slots.endFill(b, s);
+        if (b.link) |l| if (b.slotOf(s)) |slot| l.end(slot);
+        b.unbind(s);
     }
 };
 

@@ -4,6 +4,8 @@ const fake = @import("benchmark_fake.zig");
 const cli = @import("benchmark_cli_test.zig");
 const Run = cli.Run;
 const benchmark = @import("benchmark.zig");
+const serve_cli = @import("cli.zig");
+const servesFlag = serve_cli.Test.servesFlag;
 const receipt = @import("benchmark_receipt.zig");
 const json = @import("json");
 
@@ -394,6 +396,93 @@ test "an attached run whose accepted manifest lacks its rank count or revision i
         const missing_field = if (i == 0) v.get("settings").?.get("rank_count").? else v.get("model").?.get("revision").?;
         try std.testing.expect(missing_field == .null);
     }
+}
+
+test "--speed-up cannot ride an attached --server: two Macs are the benchmark's own serve child" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var r = try Run.init(a, &tmp);
+    // a refused argument combination is `Invalid`, which the benchmark reports as exit 1, not a usage error
+    try std.testing.expectEqual(@as(u8, 1), try r.command(&.{ "example-org/test-model", "--speed-up", "rank0.json", "--server", "http://127.0.0.1:1" }));
+    try std.testing.expect(r.has("--speed-up applies to the benchmark's own serve child; an attached --server cannot take it"));
+}
+
+test "pairRankCount reads a pair out of the settings file, and calls every other file what it is" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var r = try Run.init(a, &tmp);
+    var problem: []const u8 = "";
+    const Case = struct { name: []const u8, text: ?[]const u8, ranks: ?u8, says: []const u8 };
+    const cases = [_]Case{
+        .{ .name = "rank0.json", .text = "{\"rank\": 0, \"peer\": \"192.0.2.10\"}", .ranks = 2, .says = "" },
+        .{ .name = "rank1.json", .text = "{\"rank\": 1, \"links\": [{\"peer\": \"192.0.2.11\"}]}", .ranks = 2, .says = "" },
+        // a lone rank's file names no peer, so it describes no pair
+        .{ .name = "lonely.json", .text = "{\"rank\": 0}", .ranks = null, .says = "names no peer" },
+        .{ .name = "third.json", .text = "{\"rank\": 2, \"peer\": \"x\"}", .ranks = null, .says = "its rank is not 0 or 1" },
+        .{ .name = "ranks.json", .text = "{\"rank\": {\"at\": 0}, \"peer\": \"x\"}", .ranks = null, .says = "its rank is not a whole number" },
+        .{ .name = "empty.json", .text = "{\"peer\": \"x\"}", .ranks = null, .says = "names no rank" },
+        .{ .name = "list.json", .text = "[1, 2]", .ranks = null, .says = "it is not a JSON object" },
+        .{ .name = "not.json", .text = "rank = 0", .ranks = null, .says = "is not a JSON settings file" },
+        .{ .name = "missing.json", .text = null, .ranks = null, .says = "cannot read the settings file" },
+    };
+    for (cases) |c| {
+        const path = try r.path(c.name);
+        if (c.text) |text| try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text });
+        problem = "";
+        const ranks = benchmark.pairRankCount(a, io, path, &problem);
+        try std.testing.expectEqual(c.ranks, ranks);
+        if (c.ranks == null) {
+            try std.testing.expect(std.mem.indexOf(u8, problem, c.says) != null);
+            try std.testing.expect(std.mem.indexOf(u8, problem, path) != null);
+        }
+    }
+}
+
+test "--speed-up goes to the child and the receipt says two ranks; a file that names no peer is refused before the child" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var r = try Run.init(a, &tmp);
+    const m = try cli.managedWorld(a, false);
+    defer m.stop();
+    r.self_exe = try cli.standIn(&r, m.port);
+    const hub = try r.path("hub");
+    try r.env.put("HF_HUB_CACHE", hub);
+    const big = try r.path("big-checkpoint");
+    try std.Io.Dir.cwd().createDirPath(io, big);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ big, "config.json" }), .data = "{\"model_type\": \"qwen3_5\", \"hidden_size\": 5120, \"num_hidden_layers\": 64}" });
+    const out = try r.path("run.json");
+    const lonely = try r.path("lonely.json");
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lonely, .data = "{\"rank\": 0}" });
+    try std.testing.expectEqual(@as(u8, 1), try r.command(try argv(&r, &.{ big, "--speed-up", lonely, "--output", out })));
+    try std.testing.expect(r.has("names no peer") and r.has(lonely));
+    try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, out, .{}));
+    const pair = try r.path("rank0.json");
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = pair, .data = "{\"library\": \"/opt/mcdma/libmcdma-fabric.dylib\", \"rank\": 0, \"peer\": \"192.0.2.10\", \"port\": 7490, \"name\": \"speedup\"}" });
+    if (servesFlag("--speed-up")) {
+        try std.testing.expectEqual(@as(u8, 0), try r.command(try argv(&r, &.{ big, "--speed-up", pair, "--output", out })));
+        try std.testing.expect(try passed(&r, "--speed-up") and std.mem.eql(u8, (try passedValue(&r, "--speed-up")).?, pair));
+        try std.testing.expect(try receiptHas(&r, out, "\"rank_count\":2"));
+        try std.testing.expect(r.has("serves two Macs") and r.has("born and dies with every benchmark run"));
+    } else {
+        // the CUDA build does not serve --speed-up: the child's flags are checked before it starts, so the run stops
+        try std.testing.expectEqual(@as(u8, 1), try r.command(try argv(&r, &.{ big, "--speed-up", pair, "--output", out })));
+        try std.testing.expect(r.has("the managed server refuses its flags") and r.has("--speed-up is not served"));
+        try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, out, .{}));
+    }
+    // without the flag the same run is the one-Mac baseline, still 1 rank and no flag to the child
+    try std.testing.expectEqual(@as(u8, 0), try r.command(try argv(&r, &.{ big, "--output", out })));
+    try std.testing.expect(try receiptHas(&r, out, "\"rank_count\":1") and !try passed(&r, "--speed-up"));
 }
 
 test "the draft counts beside the receipt show whether a passed drafter drafted, and the receipt keeps the board's fields" {

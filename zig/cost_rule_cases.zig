@@ -16,7 +16,9 @@ test "Nemotron initial and drift passes share interleaved head sampling; the 27B
     try std.testing.expect(std.mem.indexOf(u8, body, "if (b.head != null) &head[0] else null") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "drifted(&head, &r.head)") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "fastest(heads") == null);
+    const warm = @embedFile("src/native/qwen27_warm.zig"); // the window timing moved here from the lane backend
+    try std.testing.expect(std.mem.indexOf(u8, warm, "cost_rule.fastest(timer, i)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, warm, "cost_rule.measure(") == null);
     const qwen = @embedFile("src/native/qwen27_lanes.zig");
-    try std.testing.expect(std.mem.indexOf(u8, qwen, "cost_rule.fastest(timer, i)") != null);
     try std.testing.expect(std.mem.indexOf(u8, qwen, "cost_rule.measure(") == null);
 }

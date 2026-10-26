@@ -28,6 +28,8 @@ pub fn opening(b: *Metal, s: *lanes.Stream, slot: u32) !Fill {
     if (ids.len == 0 or ids.len + s.max_new + max_rows > b.runner.capacity) return error.PromptTooLong;
     if (s.yields()) return error.Yielded; // a background pass steps aside before it touches the slot
     if (b.vision != null and s.images.len > 0 and b.image_fill != null and b.image_fill != s) return error.LaneMemory;
+    // Announced before the first chunk: rank 1 opens where rank 0 does (glm_dsa order).
+    if (b.link) |l| try l.begin(slot);
     try recover(b, s);
     b.runner.rope[slot] = try images.layout(b.vision, s);
     const d = b.drafter(slot);
@@ -115,6 +117,8 @@ pub fn chunk(b: *Metal, s: *lanes.Stream, f: *Fill) !bool {
     };
     const part = ids[at..end];
     const last = end == ids.len;
+    // Rank 0 sends the chunk before running it here (glm_dsa order): the send carries this pass's boundary.
+    if (b.link) |l| try l.chunk(slot, part, last, decoded);
     if (d) |x| {
         if (decoded) try x.decodeChunk(part, last) else try x.promptChunk(part, last);
     } else {

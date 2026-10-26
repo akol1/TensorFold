@@ -12,6 +12,8 @@ const cache_fit = @import("cache_fit.zig");
 const share_fit = @import("qwen27_share_fit.zig");
 const Resident = @import("resident.zig").Resident;
 const lb = @import("qwen27_lanes.zig");
+const link = @import("qwen27_link.zig");
+const warm = @import("qwen27_warm.zig");
 pub const lanes_backend = lb;
 const disk = @import("qwen27_disk.zig");
 const images = @import("qwen27_images.zig");
@@ -28,6 +30,7 @@ pub const Options = struct {
     learn: ?disk.Learn = null, // --learn-conversations: kept states written behind to disk and read back
     vision: ?api.VisionOpen = null, // --vision: open loads the image tower, and requests may hold images
     images: ?*images.Vision = null, // the loaded tower attach serves (and the host then owns)
+    pair: ?[]const u8 = null, // --speed-up: this rank's settings file; `Pair.init` reads the rank out of it
 };
 
 pub const Host = struct {
@@ -47,6 +50,13 @@ pub const Host = struct {
     disk_stage: ?mtl.Buffer = null, // copies out of private kept states for the disk (qwen27_disk.zig)
     vision: ?*images.Vision = null, // --vision's tower and image rows
     spares: q.snapshot.Spares = .{}, // dropped kept states' buffers, for the next saves
+    pair: ?*lb.Pair = null, // --speed-up: the seam this rank owns; rank 1 follows through it
+    link: ?*lb.Link = null, // rank 0's round sender and rank 1's follower target; `Metal.link` points here
+    hw: ?mtl.Device = null, // the pair's device, opened before the model's so the seam exists for the load
+    picks: ?mtl.Buffer = null, // a round's head-seam picks (one u32 a row), read by the lane backend
+    follower: ?std.Thread = null, // rank 1's command loop
+    quit: std.atomic.Value(bool) = .init(false), // `close` sets it so the link watchdog never reads a freed pair
+    watcher: ?std.Thread = null, // the link watchdog both ranks run while the pair is up
 
     pub fn engine(h: *Host) api.Engine {
         return h.host.engine();
@@ -294,19 +304,37 @@ fn laterBytes(h: *const Host) u64 {
 pub fn open(gpa: Allocator, io: std.Io, dir: []const u8, o: Options, a: Allocator, why: *[]const u8) !*Host {
     const pool = mtl.objc.Pool.push();
     defer pool.pop();
-    const model = try q.model.Model.loadDeferred(gpa, io, dir, 128);
+    // glm_dsa's order: the seam exists before the weights load and ready() comes once every GPU allocation is in.
+    var hw: ?mtl.Device = null;
+    var pair: ?*lb.Pair = null;
+    if (o.pair) |path| {
+        hw = try mtl.Device.init();
+        pair = lb.Pair.init(gpa, io, hw.?, path, lb.pairBytes()) catch |err| {
+            why.* = try std.fmt.allocPrint(a, "the speed-up seam {s} would not open ({s})", .{ path, @errorName(err) });
+            return err;
+        };
+    }
+    errdefer if (pair) |p| p.deinit();
+    errdefer if (hw) |d| d.deinit();
+    const model = if (pair) |p|
+        try q.model.Model.loadShardDeferred(gpa, io, dir, 128, p.rank, 2, .full)
+    else
+        try q.model.Model.loadDeferred(gpa, io, dir, 128);
     errdefer model.deinit();
     var with = o;
     // the tower before the slots: their room and the cache's budget count it as taken
     if (o.vision) |v| with.images = try images.open(gpa, io, model, dir, v, a, why);
     errdefer if (with.images) |v| v.deinit();
-    const h = try attach(gpa, io, model, null, with, a, why);
+    const h = try attach(gpa, io, model, null, with, a, why, pair);
     h.owns_model = true;
+    h.pair = pair;
+    h.hw = hw;
     return h;
 }
 
 /// A loaded model served as `open` serves one, `drafter` bound in place of `o.drafter`; both stay the caller's.
-pub fn attach(gpa: Allocator, io: std.Io, model: *q.model.Model, drafter: ?*q.dflash.runtime_model.Model, o: Options, a: Allocator, why: *[]const u8) !*Host {
+pub fn attach(gpa: Allocator, io: std.Io, model: *q.model.Model, drafter: ?*q.dflash.runtime_model.Model, o: Options, a: Allocator, why: *[]const u8, pair: ?*lb.Pair) !*Host {
+    if (pair != null) try pairFlags(o, drafter != null, why);
     const pool = mtl.objc.Pool.push();
     defer pool.pop();
     const capacity = if (o.context == 0) @min(model.config.max_position, 32768) else o.context;
@@ -326,9 +354,32 @@ pub fn attach(gpa: Allocator, io: std.Io, model: *q.model.Model, drafter: ?*q.df
     h.cache = null;
     h.resident = null;
     h.disk_stage = null;
+    // create() leaves unnamed Host fields undefined: a debug-filled optional is non-null, so name h.link first.
+    h.link = null;
+    h.hw = null;
+    h.picks = null;
+    h.follower = null;
+    h.quit = .init(false);
+    h.watcher = null;
     h.vision = o.images; // closed with the host; a failed attach leaves it to the caller
     h.runner = try q.decode_round.Runner.initReady(gpa, model, slots, capacity + lb.max_rows, 1);
     errdefer h.runner.deinit();
+    h.pair = pair;
+    if (pair) |p| {
+        if (slots != 1) {
+            why.* = try std.fmt.allocPrint(a, "--speed-up serves one greedy stream: pass --parallel 1", .{});
+            return error.PairOneStream;
+        }
+        // The picks live where the head seam writes them, so the lane backend reads them rather than a local argmax.
+        const picks = try model.device.buffer(lb.batch_rows * @sizeOf(u32), mtl.ResourceOptions.shared | mtl.ResourceOptions.untracked);
+        errdefer picks.deinit();
+        h.picks = picks;
+        h.link = try gpa.create(lb.Link);
+        errdefer gpa.destroy(h.link.?);
+        h.link.?.* = .{ .pair = p, .gpa = gpa };
+        h.runner.reduce = lb.pairReduce(p);
+        h.runner.picks = .{ .buffer = picks, .offset = 0 };
+    }
     if (drafter) |d| h.draft = try lb.Draft.attach(gpa, &h.runner, d, false) else if (o.drafter) |d| h.draft = lb.Draft.open(gpa, io, model, &h.runner, d, if (o.drafter_bits == 4) .prepared_q4_reference else .bf16_reference) catch |err| {
         why.* = try std.fmt.allocPrint(a, "the native Qwen3.8-27B drafter cannot load {s} ({s})", .{ d, @errorName(err) });
         return error.DrafterLoad;
@@ -336,10 +387,11 @@ pub fn attach(gpa: Allocator, io: std.Io, model: *q.model.Model, drafter: ?*q.df
     errdefer if (h.draft) |d| d.deinit();
     h.back = try lb.Metal.init(gpa, &h.runner, h.draft);
     errdefer h.back.deinit();
+    h.back.link = h.link;
     h.back.chunk = h.runner.promptRows(q.model.promptRows());
     h.back.grow = .{ .ctx = h, .room = Host.roomFor, .added = Host.added };
     h.back.vision = o.images;
-    if (h.draft != null) try h.back.measure(io);
+    if (h.draft != null) try warm.measure(h.back, io);
     h.cfg = try lanes.Config.init(gpa, h.back.facts(), lb.max_rows, lb.max_rows - 1);
     errdefer h.cfg.deinit(gpa);
     h.clock = .{ .io = io };
@@ -367,14 +419,52 @@ pub fn attach(gpa: Allocator, io: std.Io, model: *q.model.Model, drafter: ?*q.df
         };
         if (model.ane) |share| share.footprint_growth = platform.memory_policy.growth(before, cache_fit.footprint());
     }
-    try enableCache(h, o.cache_gib, o.cache_over_cap, a, why);
+    // a pair's prompt states are two Macs' and its slots are one: no reuse in landing 1, and no disk learning
+    if (pair == null) try enableCache(h, o.cache_gib, o.cache_over_cap, a, why);
     errdefer if (h.cache) |*store| store.deinit();
-    if (o.learn) |l| try disk.attach(h, io, a, l);
+    if (pair == null) if (o.learn) |l| try disk.attach(h, io, a, l);
     errdefer if (h.cache) |*store| if (store.disk) |r| r.deinit();
     h.host.keepalive_target = .{ .ctx = &h.warm, .tick = mtl.keepalive.Target.tick };
+    // both Macs are loaded and allocated before either serves: rank 1 may now replay rank 0's rounds
+    if (pair) |p| p.ready() catch |err| {
+        why.* = if (err == error.PairPeerSilent)
+            "the peer never signalled ready in five minutes: start rank 1 first, with the same build on both Macs and each rank's own settings file"
+        else
+            try std.fmt.allocPrint(a, "the pair link was not ready ({s}): restart both ranks", .{@errorName(err)});
+        return err;
+    };
+    // a dead link is not a serving state: exit so a supervisor restarts both ranks, not serve seam errors
+    if (pair) |p| {
+        h.watcher = std.Thread.spawn(.{}, link.watch, .{ p, &h.quit }) catch |err| blk: {
+            std.log.warn("qwen27: no link watchdog ({s}): a dead peer leaves this rank up", .{@errorName(err)});
+            break :blk null;
+        };
+    }
     try h.host.start();
+    if (pair) |p| if (p.rank == 1) {
+        h.follower = std.Thread.spawn(.{}, link.follow, .{h.back}) catch |err| {
+            why.* = try std.fmt.allocPrint(a, "rank 1's follower would not start ({s})", .{@errorName(err)});
+            return err;
+        };
+    };
     std.log.info("Qwen3.8-27B: {d} streams of {d} tokens{s}{s}", .{ slots, capacity, if (h.draft != null) ", DFlash2 drafts for one of them" else "", if (o.images != null) ", images read" else "" });
     return h;
+}
+
+/// The flags a pair refuses, named: quietly serving without one of them would misreport what the reply ran on.
+fn pairFlags(o: Options, drafter: bool, why: *[]const u8) !void {
+    if (drafter) {
+        why.* = "--drafter does not run on a pair: rank 1 has no drafter checkpoint, so both ranks decode plain";
+        return error.PairNoDrafter;
+    }
+    if (o.cache_gib != null) {
+        why.* = "--prompt-cache-gib does not run on a pair: each Mac keeps its own halves of the slots' states";
+        return error.PairNoCache;
+    }
+    if (o.learn != null) {
+        why.* = "--learn does not run on a pair: each Mac learns its own halves of the slots' states";
+        return error.PairNoLearn;
+    }
 }
 
 /// Reserve later buffers and the loaded share's priced bytes that its construction left outside the footprint.
@@ -408,7 +498,18 @@ const holdResident = q.residency.hold;
 
 pub fn close(ptr: *anyopaque) void {
     const h = Host.of(ptr);
+    h.quit.store(true, .release); // the watchdog exits before the pair it reads is torn down
     h.host.stop();
+    // the pair goes after the host stops (no round is mid-flight) and before the model frees the device
+    if (h.pair) |p| p.stopFollowing();
+    if (h.follower) |t| t.join();
+    if (h.watcher) |t| t.join();
+    if (h.link) |l| {
+        l.deinit();
+        h.gpa.destroy(l);
+    }
+    if (h.pair) |p| p.deinit();
+    if (h.hw) |d| d.deinit();
     const rows = if (h.cache) |*store| store.disk else null;
     if (h.cache) |*store| store.deinit(); // its states leave the set as they go
     h.spares.deinit();
@@ -420,6 +521,7 @@ pub fn close(ptr: *anyopaque) void {
     h.back.deinit();
     if (h.draft) |d| d.deinit();
     h.runner.deinit();
+    if (h.picks) |b| b.deinit();
     if (h.vision) |v| v.deinit();
     if (h.owns_model) h.model.deinit();
     h.gpa.destroy(h);

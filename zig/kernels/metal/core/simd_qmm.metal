@@ -2,6 +2,11 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// OUT type: bf16 for the frame, fp32 for the seam producer (exact partial); TF_OUT=float selects the fp32 build.
+#ifndef TF_OUT
+#define TF_OUT bfloat
+#endif
+
 // K inputs, N outputs, R rows; one is 1.0 read at run time so the compiler can't fold or reorder the fma sums.
 struct TfSqArgs { int K, N, R; float one; };
 
@@ -28,7 +33,7 @@ template <int S, int NT, int RT>
                           const device bfloat* SC [[buffer(2)]],
                           const device bfloat* BI [[buffer(3)]],
                           constant TfSqArgs& a [[buffer(4)]],
-                          device bfloat* OUT [[buffer(5)]],
+                          device TF_OUT* OUT [[buffer(5)]],
                           uint sgi [[simdgroup_index_in_threadgroup]],
                           uint sgs [[simdgroups_per_threadgroup]],
                           uint lane [[thread_index_in_simdgroup]],
@@ -100,7 +105,7 @@ template <int S, int NT, int RT>
         for (int t = 0; t < NT; t++)
           for (int e = 0; e < 2; e++) {
             const int row = rb + 8 * rt + fn + e, n = nb + 8 * t + fm;
-            if (row < R && n < N) OUT[size_t(row) * N + n] = bfloat(acc[rt][t][e]);
+            if (row < R && n < N) OUT[size_t(row) * N + n] = TF_OUT(acc[rt][t][e]);
           }
       return;
     }
@@ -117,7 +122,7 @@ template <int S, int NT, int RT>
     const int rt = idx / (NT * 64), t = (idx / 64) % NT, l = (idx % 64) / 2, e = idx % 2;
     const int lq = l / 4;
     const int row = rb + 8 * rt + (lq & 2) * 2 + (l % 2) * 2 + e, n = nb + 8 * t + (lq & 4) + ((l / 2) % 4);
-    if (row < R && n < N) OUT[size_t(row) * N + n] = bfloat(v[0]);
+    if (row < R && n < N) OUT[size_t(row) * N + n] = TF_OUT(v[0]);
   }
 }
 
@@ -128,7 +133,7 @@ template <int S, int NT, int RT, int P>
                           const device bfloat* SC [[buffer(2)]],
                           const device bfloat* BI [[buffer(3)]],
                           constant TfSqArgs& a [[buffer(4)]],
-                          device bfloat* OUT [[buffer(5)]],
+                          device TF_OUT* OUT [[buffer(5)]],
                           uint sgi [[simdgroup_index_in_threadgroup]],
                           uint lane [[thread_index_in_simdgroup]],
                           uint3 tg [[threadgroup_position_in_grid]]) {
@@ -209,7 +214,7 @@ template <int S, int NT, int RT, int P>
       for (int t = 0; t < NT; t++)
         for (int e = 0; e < 2; e++) {
           const int row = rb + 8 * rt + fn + e, n = nb + 8 * t + fm;
-          if (row < R && n < N) OUT[size_t(row) * N + n] = bfloat(acc[0][rt][t][e]);
+          if (row < R && n < N) OUT[size_t(row) * N + n] = TF_OUT(acc[0][rt][t][e]);
         }
     return;
   }
@@ -225,7 +230,7 @@ template <int S, int NT, int RT, int P>
     const int rt = idx / (NT * 64), t = (idx / 64) % NT, l = (idx % 64) / 2, e = idx % 2;
     const int lq = l / 4;
     const int row = rb + 8 * rt + (lq & 2) * 2 + (l % 2) * 2 + e, n = nb + 8 * t + (lq & 4) + ((l / 2) % 4);
-    if (row < R && n < N) OUT[size_t(row) * N + n] = bfloat(v[0]);
+    if (row < R && n < N) OUT[size_t(row) * N + n] = TF_OUT(v[0]);
   }
 }
 
@@ -236,7 +241,7 @@ template <int S, int NR, int XB, int RS>
                              const device bfloat* SC [[buffer(2)]],
                              const device bfloat* BI [[buffer(3)]],
                              constant TfSqArgs& a [[buffer(4)]],
-                             device bfloat* OUT [[buffer(5)]],
+                             device TF_OUT* OUT [[buffer(5)]],
                              uint sgi [[simdgroup_index_in_threadgroup]],
                              uint sgs [[simdgroups_per_threadgroup]],
                              uint lane [[thread_index_in_simdgroup]],
@@ -320,7 +325,7 @@ template <int S, int NR, int XB, int RS>
       float v = acc[u][r];
       for (int m = 1; m < S; m <<= 1) v = fma(simd_shuffle_xor(v, ushort(m)), one, v);
       const int n = n0 + SLOTS * u;
-      if (n < N && c == 0) OUT[size_t(r) * N + n] = bfloat(v);
+      if (n < N && c == 0) OUT[size_t(r) * N + n] = TF_OUT(v);
     }
 }
 

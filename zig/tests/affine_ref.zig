@@ -360,7 +360,7 @@ pub fn main(_: std.process.Init) !void {
         defer ref.deinit();
         for ([_]bool{ false, true }) |f32_out| try affine(&t, device, queue, &s, ref, f32_out);
     };
-    var p = try sq.Pipelines.load(device);
+    var p = try sq.Pipelines.load(device, .bf16);
     defer p.deinit();
     for ([_][2]usize{ .{ 40, 512 }, .{ 256, 4096 }, .{ 6400, 256 } }) |shape| { // chunks of 32, 16 and 8
         seed += 1;

@@ -69,7 +69,8 @@ pub const Engine = struct {
         e.device = try mtl.Device.init();
         e.queue = try e.device.queue();
         try frags.check(e.device, e.queue, gpa); // the fragment layout nax.h gives the EXLR8 prompt kernels
-        e.pair = try pr.Pair.init(gpa, io, e.device, settings, gpu.prompt_rows * 6144 * 4);
+        // One seam payload per window slot, sized by pair.streamBytes (derived, so no stale *4); hidden width 6144.
+        e.pair = try pr.Pair.init(gpa, io, e.device, settings, pr.streamBytes(gpu.prompt_rows, 6144));
         const text = try std.Io.Dir.cwd().readFileAlloc(io, try std.fmt.allocPrint(gpa, "{s}/config.json", .{dir}), gpa, .limited(1 << 20));
         var c = try cfg.parse(gpa, text);
         try cfg.split(&c, e.pair.rank, 2);
@@ -138,7 +139,7 @@ pub const Engine = struct {
             std.log.err("glm_dsa: GPU command failed: {s}", .{msg});
             return error.GpuFailure;
         }
-        if (e.pair.gaveUp() != 0 or e.pair.failed.load(.acquire)) return error.PairLinkFailed;
+        if (e.pair.failed()) return error.PairLinkFailed;
         e.gpu_ms = (cb.gpuEnd() - cb.gpuStart()) * 1000;
     }
 
@@ -152,6 +153,7 @@ pub const Engine = struct {
         s.held_n = 0;
         s.prompt.clearRetainingCapacity();
         try s.prompt.appendSlice(e.gpa, prompt);
+        _ = e.pair.beginRound(); // the failure line's label; a paired failure is permanent, so this is attribution only
     }
 
     /// Prompt rows [at, at + n) of slot i (a prompt window) into its caches and the head's; the first token at the end.
@@ -168,13 +170,13 @@ pub const Engine = struct {
         const pool = mtl.objc.Pool.push();
         defer pool.pop();
         const cb = e.queue.commandBuffer();
-        const enc = cb.compute(.serial);
+        var enc = cb.compute(.serial);
         const s0 = e.scratch(0);
-        try pw.backbone(&e.m, &s0, q, enc, n, at);
+        try pw.backbone(&e.m, &s0, q, &enc, n, at);
         var k: u32 = if (every) 0 else n - 1;
         while (k < n and (last or every)) : (k += R) {
             const rows = @min(R, n - k);
-            try e.m.pick(enc, .{ .buf = q.x, .off = @as(usize, k) * hid * 4 }, rows, .{ .buf = q.picks, .off = @as(usize, k) * 4 });
+            try e.m.pick(&enc, .{ .buf = q.x, .off = @as(usize, k) * hid * 4 }, rows, .{ .buf = q.picks, .off = @as(usize, k) * 4 });
         }
         if (e.hasMtp()) {
             // the head's rows: the one before this chunk (the slot's xs row), then all but the last
@@ -192,7 +194,7 @@ pub const Engine = struct {
             u32s(e.pass[3].idx, 1)[0] = n - 1;
             kn.gather(&e.m.K.k, enc, .{ .buf = q.x }, .{ .buf = e.pass[3].idx }, hid, hid, hid, .{ .buf = e.xs, .off = (2 * R + @as(usize, i)) * hid * 4 }, 1);
             enc.barrier();
-            if (mr > 0) try pw.draft(&e.m, &s0, q, enc, mr, at - carry);
+            if (mr > 0) try pw.draft(&e.m, &s0, q, &enc, mr, at - carry);
         }
         enc.end();
         try e.finish(cb);
@@ -226,10 +228,10 @@ pub const Engine = struct {
         const pool = mtl.objc.Pool.push();
         defer pool.pop();
         const cb = e.queue.commandBuffer();
-        const enc = cb.compute(.serial);
+        var enc = cb.compute(.serial);
         const s0 = e.scratch(0);
-        try e.m.backbone(&s0, enc, rows, top, .{ .buf = e.pass[0].ids });
-        try e.m.pick(enc, .{ .buf = s0.x }, rows, .{ .buf = e.pass[0].picks });
+        try e.m.backbone(&s0, &enc, rows, top, .{ .buf = e.pass[0].ids });
+        try e.m.pick(&enc, .{ .buf = s0.x }, rows, .{ .buf = e.pass[0].picks });
         for (u32s(e.pass[2].idx, rows), 0..) |*x, r| x.* = @intCast(r);
         kn.gather(&e.m.K.k, enc, .{ .buf = s0.x }, .{ .buf = e.pass[2].idx }, hid, hid, hid, .{ .buf = e.xs }, rows);
         enc.end();
@@ -294,12 +296,12 @@ pub const Engine = struct {
         const pool = mtl.objc.Pool.push();
         defer pool.pop();
         const cb = e.queue.commandBuffer();
-        const enc = cb.compute(.serial);
+        var enc = cb.compute(.serial);
         kn.gather(&e.m.K.k, enc, .{ .buf = e.xs }, .{ .buf = e.pass[1].idx }, hid, hid, hid, .{ .buf = e.m.head.prev }, rows);
         enc.barrier();
         const s1 = e.scratch(1);
-        try e.m.draft(&s1, enc, rows, top, .{ .buf = e.pass[1].ids }, .{ .buf = e.m.head.prev });
-        if (depth > 0) try e.m.pick(enc, .{ .buf = s1.x }, rows, .{ .buf = e.pass[1].picks });
+        try e.m.draft(&s1, &enc, rows, top, .{ .buf = e.pass[1].ids }, .{ .buf = e.m.head.prev });
+        if (depth > 0) try e.m.pick(&enc, .{ .buf = s1.x }, rows, .{ .buf = e.pass[1].picks });
         var d: u32 = 2;
         while (d <= depth) : (d += 1) {
             const p = &e.pass[d];
@@ -312,8 +314,8 @@ pub const Engine = struct {
             kn.gather(&e.m.K.k, enc, .{ .buf = s1.h }, .{ .buf = p.idx }, hid, hid, hid, .{ .buf = e.m.head.prev }, nq);
             enc.barrier();
             const sd = e.scratch(d);
-            try e.m.draft(&sd, enc, nq, top + d - 1, .{ .buf = p.ids }, .{ .buf = e.m.head.prev });
-            try e.m.pick(enc, .{ .buf = sd.x }, nq, .{ .buf = p.picks });
+            try e.m.draft(&sd, &enc, nq, top + d - 1, .{ .buf = p.ids }, .{ .buf = e.m.head.prev });
+            try e.m.pick(&enc, .{ .buf = sd.x }, nq, .{ .buf = p.picks });
         }
         enc.end();
         try e.finish(cb);

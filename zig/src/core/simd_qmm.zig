@@ -38,15 +38,32 @@ fn fits(s: u32, nt: u32, rt: u32) bool {
     return s * rt * nt * 64 * 4 <= 16384;
 }
 
+/// OUT store: bf16 for the frame, f32 for a seam's partial, so the pair's sum is the only rounding into the frame.
+pub const Out = enum { bf16, f32 };
+
 pub const Pipelines = struct {
     mma: [s_values.len][nt_values.len][2]?mtl.Pipeline,
     scalar: [s_values.len][2][max_scalar_rows]mtl.Pipeline,
     paired: mtl.Pipeline, // tf_sq_mmp_16_4_2_2: the shapes `pairs` takes
 
-    pub fn load(device: mtl.Device) !Pipelines {
+    pub fn load(device: mtl.Device, out: Out) !Pipelines {
         const pool = mtl.objc.Pool.push();
         defer pool.pop();
-        const lib = try mtl.Library.fromSource(device, sources.core_simd_qmm, mtl.CompileOptions.mlx());
+        const source = sources.core_simd_qmm;
+        var heap: ?[]u8 = null;
+        defer if (heap) |h| std.heap.page_allocator.free(h);
+        var text: []const u8 = source;
+        if (out == .f32) {
+            // The fp32 store is this same source with TF_OUT defined to float; the kernels take the rest from there.
+            const define = "#define TF_OUT float\n";
+            if (std.mem.indexOf(u8, source, "TF_OUT") == null) return error.SeamFloatStoreMissing;
+            const joined = try std.heap.page_allocator.alloc(u8, define.len + source.len);
+            @memcpy(joined[0..define.len], define);
+            @memcpy(joined[define.len..], source);
+            heap = joined;
+            text = joined;
+        }
+        const lib = try mtl.Library.fromSource(device, text, mtl.CompileOptions.mlx());
         defer lib.deinit();
         var p: Pipelines = undefined;
         inline for (s_values, 0..) |s, si| {

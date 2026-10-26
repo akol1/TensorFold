@@ -79,7 +79,7 @@ pub const Proj = struct {
         var p = Proj{ .a = a, .rig = .{ .a = a, .device = device, .queue = queue }, .v = v, .name = name };
         switch (v.kind) {
             .row => p.row_p = try row.Pipelines.load(device),
-            .simd => p.sq_p = try sq.Pipelines.load(device),
+            .simd => p.sq_p = try sq.Pipelines.load(device, if (v.f32_out) .f32 else .bf16),
             .simd_bits => p.sqb_p = try sqb.Pipelines.load(device),
             .affine_mm => {
                 const src = try mm.source(device, a, .{ .bits = v.bits, .group = @intCast(v.group), .out_f32 = v.f32_out });

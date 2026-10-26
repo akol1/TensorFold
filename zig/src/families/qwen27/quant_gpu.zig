@@ -10,7 +10,7 @@ pub const Ref = projection.Ref;
 /// Group sums the input's producer wrote: XS[group * stride + row], in the lane projection's order.
 pub const Sums = struct { ref: Ref, stride: u32 };
 
-const Key = struct { kind: Kind, n: u32 = 0, k: u32, slices: u32 = 0, tile: u32 = 0, tmr: u32 = 0, edge: bool = false, skip: u32 = 0, cut: [2]u32 = .{ 0, 0 }, bits: u8 = 4, group: u32 = 64 };
+const Key = struct { kind: Kind, n: u32 = 0, k: u32, slices: u32 = 0, tile: u32 = 0, tmr: u32 = 0, edge: bool = false, skip: u32 = 0, cut: [2]u32 = .{ 0, 0 }, f32_out: bool = false, bits: u8 = 4, group: u32 = 64 };
 pub const Kind = enum { projection, xsum, norm, input_norm, mlp, ane_input, mlp_ane, add_ane };
 
 pub const Kernels = struct {
@@ -20,6 +20,8 @@ pub const Kernels = struct {
     profiler: ?*profile.Trace = null,
     row_pipelines: ?row.Pipelines = null,
     simd: ?row.simd.Pipelines = null,
+    /// The seam producer's fp32 stores: the same tiles, loaded only where a pair run writes a partial.
+    simd_f32: ?row.simd.Pipelines = null,
     simd_bits: ?row.simd_bits.Pipelines = null,
     /// Raw matrices take simd_qmm_bits' tiles; off on tensor units, whose raw matrices are runs short of a lane tile.
     raw_tiles: bool = true,
@@ -51,6 +53,7 @@ pub const Kernels = struct {
         k.setResident(null);
         if (k.row_pipelines) |*pipelines| pipelines.deinit();
         if (k.simd) |*pipelines| pipelines.deinit();
+        if (k.simd_f32) |*pipelines| pipelines.deinit();
         if (k.simd_bits) |*pipelines| pipelines.deinit();
         k.twins.deinit(k.allocator);
         k.bit_twins.deinit(k.allocator);
@@ -108,20 +111,32 @@ pub const Kernels = struct {
 
     /// `quant` over input groups [cut[0], cut[0] + cut[1]) only, into fp32 partial sums.
     pub fn quantCut(k: *Kernels, input_encoder: mtl.ComputeEncoder, p: projection.Linear, x: Ref, xs: Sums, dims: Ref, y: Ref, rows: u32, cut: [2]u32) !void {
-        return k.quantImpl(input_encoder, p, x, xs, dims, y, rows, 0, cut);
+        return k.quantImpl(input_encoder, p, x, xs, dims, y, rows, 0, cut, false);
     }
 
     /// `quant` over a fused two-half projection (the MLP's gate_up) without the first `skip` tiles of each half.
     pub fn quantSkip(k: *Kernels, input_encoder: mtl.ComputeEncoder, p: projection.Linear, x: Ref, xs: ?Sums, dims: Ref, y: Ref, rows: u32, skip: u32) !void {
-        return k.quantImpl(input_encoder, p, x, xs, dims, y, rows, skip, .{ 0, 0 });
+        return k.quantImpl(input_encoder, p, x, xs, dims, y, rows, skip, .{ 0, 0 }, false);
     }
 
-    fn quantImpl(k: *Kernels, input_encoder: mtl.ComputeEncoder, p: projection.Linear, x: Ref, xs: ?Sums, dims: Ref, y: Ref, rows: u32, skip: u32, cut: [2]u32) !void {
-        if (p.runs.len > 0) return k.quantRuns(input_encoder, p, x, xs, dims, y, rows, skip, cut);
-        return k.quantOne(input_encoder, p, x, xs, dims, y, rows, skip, cut);
+    /// quant as fp32: the seam's part producer, matching core.pair.Elem; it writes the exchange slot, never the frame.
+    pub fn quantPart(k: *Kernels, input_encoder: mtl.ComputeEncoder, p: projection.Linear, x: Ref, xs: ?Sums, dims: Ref, y: Ref, rows: u32) !void {
+        // Asserts the producer's element matches core.pair.Elem; the import goes through core, never a file path.
+        if (comptime @hasDecl(@import("core"), "pair")) {
+            if (comptime @import("core").pair.Elem != f32) @compileError("pair: the seam producer writes f32 elements; flip core/pair.zig's Elem and pair.metal's SEAM_ELEM_BF16 with it");
+        }
+        return k.quantImpl(input_encoder, p, x, xs, dims, y, rows, 0, .{ 0, 0 }, true);
     }
 
-    fn quantOne(k: *Kernels, input_encoder: mtl.ComputeEncoder, p: projection.Linear, x: Ref, xs: ?Sums, dims: Ref, y: Ref, rows: u32, skip: u32, cut: [2]u32) !void {
+    fn quantImpl(k: *Kernels, input_encoder: mtl.ComputeEncoder, p: projection.Linear, x: Ref, xs: ?Sums, dims: Ref, y: Ref, rows: u32, skip: u32, cut: [2]u32, f32_out: bool) !void {
+        if (p.runs.len > 0) {
+            if (f32_out) return error.SeamPartNeedsFloatStore; // a mixed stack writes frame rows, not one partial per exchange
+            return k.quantRuns(input_encoder, p, x, xs, dims, y, rows, skip, cut);
+        }
+        return k.quantOne(input_encoder, p, x, xs, dims, y, rows, skip, cut, f32_out);
+    }
+
+    fn quantOne(k: *Kernels, input_encoder: mtl.ComputeEncoder, p: projection.Linear, x: Ref, xs: ?Sums, dims: Ref, y: Ref, rows: u32, skip: u32, cut: [2]u32, f32_out: bool) !void {
         if ((skip > 0 or cut[1] > 0) and p.raw != null) return error.BadCoreProjectionRows;
         if (skip > 0 and (p.raw != null or skip >= p.n / 64)) return error.BadCoreProjectionRows;
         if (p.raw) |raw| if (raw.bits != 4 and k.tiled(raw)) {
@@ -136,16 +151,23 @@ pub const Kernels = struct {
 
         _ = dims;
         if (rows == 0 or rows > @import("gpu_frame.zig").max_rows or p.tile != 32) return error.BadCoreProjectionRows;
-        if (p.raw) |raw| if (raw.bits == 4 and raw.group == 64 and raw.sum == .f32 and raw.n % 8 == 0) {
-            const m = row.simd.Matrix{ .w = raw.w, .w_off = raw.w_off, .scales = raw.scales, .s_off = raw.s_off, .biases = raw.biases, .b_off = raw.b_off, .n = raw.n, .k = raw.k };
-            const scalar = try k.twin(m); // loads the tiles before they're read
-            const call = try row.simd.call(&k.simd.?, raw.n, raw.k, rows, scalar, try k.pairTwin(m));
-            row.simd.encode(e, call, m, x.buffer, x.offset, y.buffer, y.offset);
-            e.barrier();
-            try span.end();
-            return;
-        };
         if (p.raw) |raw| {
+            if (raw.bits == 4 and raw.group == 64 and raw.sum == .f32 and raw.n % 8 == 0) {
+                const m = row.simd.Matrix{ .w = raw.w, .w_off = raw.w_off, .scales = raw.scales, .s_off = raw.s_off, .biases = raw.biases, .b_off = raw.b_off, .n = raw.n, .k = raw.k };
+                const scalar = try k.twin(m); // loads the tiles before they're read
+                const paired = try k.pairTwin(m);
+                // Same tiles as fp32: this rank's exact k-half accumulator, so the pair's sum is the only rounding.
+                const pipelines = if (f32_out) blk: {
+                    if (k.simd_f32 == null) k.simd_f32 = try row.simd.Pipelines.load(k.device, .f32);
+                    break :blk &k.simd_f32.?;
+                } else &k.simd.?;
+                const call = try row.simd.call(pipelines, raw.n, raw.k, rows, scalar, paired);
+                row.simd.encode(e, call, m, x.buffer, x.offset, y.buffer, y.offset);
+                e.barrier();
+                try span.end();
+                return;
+            }
+            if (f32_out) return error.SeamPartNeedsFloatStore; // the row and strided kernels have no fp32 store
             if (k.row_pipelines == null) k.row_pipelines = try row.Pipelines.load(k.device);
             const call = try row.call(&k.row_pipelines.?, raw, rows, false);
             e.setPipeline(call.pipeline);
@@ -161,15 +183,16 @@ pub const Kernels = struct {
             return;
         }
         const reg = p.bits == 4 and p.group == 64;
-        if (!reg and (skip > 0 or cut[1] > 0)) return error.BadCoreProjectionRows;
-        const key = Key{ .kind = .projection, .n = p.n, .k = p.k, .slices = if (reg) sk else p.slices, .skip = skip, .cut = cut, .bits = p.bits, .group = p.group };
+        const exact = cut[1] > 0 or f32_out; // the output is fp32: a member's partial sum, or a seam payload
+        if (!reg and (skip > 0 or exact)) return error.BadCoreProjectionRows;
+        const key = Key{ .kind = .projection, .n = p.n, .k = p.k, .slices = if (reg) sk else p.slices, .skip = skip, .cut = cut, .f32_out = f32_out, .bits = p.bits, .group = p.group };
         const sums: ?Sums = if (reg) xs else null; // the non-reg kernel sums its own groups
         const half = p.n / 64;
         const ranges = [_][2]usize{ .{ skip, half - skip }, .{ half + skip, half - skip } };
         const entry = try k.lanes.getOrPut(k.allocator, key);
         if (!entry.found_existing) {
             errdefer _ = k.lanes.remove(key);
-            entry.value_ptr.* = try lane.Projection.init(k.allocator, k.device, .{ .n = p.n, .k = p.k, .format = .{ .bits = p.bits, .group = p.group }, .sk = key.slices, .ranges = if (skip > 0) &ranges else &.{}, .groups = if (cut[1] > 0) .{ cut[0], cut[1] } else null, .output = if (cut[1] > 0) .f32 else .bf16, .precompute_sums = reg, .reg = reg });
+            entry.value_ptr.* = try lane.Projection.init(k.allocator, k.device, .{ .n = p.n, .k = p.k, .format = .{ .bits = p.bits, .group = p.group }, .sk = key.slices, .ranges = if (skip > 0) &ranges else &.{}, .groups = if (cut[1] > 0) .{ cut[0], cut[1] } else null, .output = if (exact) .f32 else .bf16, .precompute_sums = reg, .reg = reg });
             k.joined(entry.value_ptr);
         }
         const step: u32 = if (entry.value_ptr.reg) lane.reg_rows else 16;
@@ -178,7 +201,7 @@ pub const Kernels = struct {
             const xr = lane.Ref{ .buf = x.buffer, .off = x.offset + @as(usize, first) * p.k * 2 };
             const w = lane.Ref{ .buf = p.words.buffer, .off = p.words.offset };
             const sb = lane.Ref{ .buf = p.pairs.buffer, .off = p.pairs.offset };
-            const yr = lane.Ref{ .buf = y.buffer, .off = y.offset + @as(usize, first) * p.n * @as(usize, if (cut[1] > 0) 4 else 2) };
+            const yr = lane.Ref{ .buf = y.buffer, .off = y.offset + @as(usize, first) * p.n * @as(usize, if (exact) 4 else 2) };
             if (sums) |s| try entry.value_ptr.encodeSums(e, xr, w, sb, .{ .ref = .{ .buf = s.ref.buffer, .off = s.ref.offset + @as(usize, first) * 4 }, .stride = s.stride }, yr, @min(rows - first, step)) else try entry.value_ptr.encode(e, xr, w, sb, yr, @min(rows - first, step));
         }
         try span.end();
@@ -196,7 +219,7 @@ pub const Kernels = struct {
                 const xr = Ref{ .buffer = x.buffer, .offset = x.offset + r * p.k * 2 };
                 const sr: ?Sums = if (xs) |s| .{ .ref = .{ .buffer = s.ref.buffer, .offset = s.ref.offset + r * 4 }, .stride = s.stride } else null;
                 const yr = Ref{ .buffer = y.buffer, .offset = y.offset + (r * p.n + run.first) * 2 };
-                try k.quantOne(input_encoder, run.linear, xr, sr, dims, yr, 1, 0, .{ 0, 0 });
+                try k.quantOne(input_encoder, run.linear, xr, sr, dims, yr, 1, 0, .{ 0, 0 }, false);
             }
         }
     }
@@ -248,7 +271,7 @@ pub const Kernels = struct {
 
     /// Loads the tiles on first use and checks the scalar twin against them once per shape.
     fn twin(k: *Kernels, m: row.simd.Matrix) !bool {
-        if (k.simd == null) k.simd = try row.simd.Pipelines.load(k.device);
+        if (k.simd == null) k.simd = try row.simd.Pipelines.load(k.device, .bf16);
         if (k.twins.get(.{ m.n, m.k })) |ok| return ok;
         const ok = try row.simd.twinExact(&k.simd.?, k.device, m);
         if (!ok) std.log.info("qwen27: {d}x{d} rows take simdgroup tiles at every width (the scalar twin's bits differ on this chip)", .{ m.n, m.k });

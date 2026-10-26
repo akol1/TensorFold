@@ -1,0 +1,152 @@
+//! The seam window's regions and the payload ABI, shared by the link and the host-copy Loopback.
+const std = @import("std");
+const mtl = @import("metal");
+const Fence = @import("fence.zig").Fence;
+
+pub const Ref = @import("exlr8_projection.zig").Ref;
+
+pub const PAGE = 16384;
+pub fn pages(n: usize) usize {
+    return (n + PAGE - 1) / PAGE * PAGE;
+}
+/// A command's words at most: a 262,144-token prompt and its head.
+pub const command_words = 262144 + 64;
+pub const CMD_BYTES = pages(8 + 4 * command_words);
+pub const JOBS = 4096;
+
+/// Which parity slot x uses: rank r cannot finish x without the peer's x, so the peer is at most one exchange ahead.
+pub const Slot = enum(u1) { a = 0, b = 1 };
+
+pub fn slotOf(x: u32) Slot {
+    return @fromBackingInt(@intCast(x % 2));
+}
+
+/// The window on both Macs: parts in/out by parity (a page before each out), commands, flags, host words.
+pub const Layout = struct {
+    slot: usize,
+
+    pub fn recv(l: Layout, x: u32) usize {
+        return @as(usize, @backingInt(slotOf(x))) * l.slot;
+    }
+    pub fn send(l: Layout, x: u32) usize {
+        return 2 * l.slot + @as(usize, @backingInt(slotOf(x))) * (PAGE + l.slot) + PAGE;
+    }
+    pub fn cmdIn(l: Layout) usize {
+        return 4 * l.slot + 2 * PAGE;
+    }
+    pub fn cmdOut(l: Layout) usize {
+        return l.cmdIn() + CMD_BYTES + PAGE;
+    }
+    pub fn flags(l: Layout) usize {
+        return l.cmdOut() + CMD_BYTES;
+    }
+    pub fn sync(l: Layout) usize {
+        return l.flags() + PAGE;
+    }
+    pub fn window(l: Layout) usize {
+        return l.sync() + PAGE;
+    }
+};
+pub const FLAG = 0; // u64 in the flag page: the last exchange whose peer part has landed (written by the peer's relay)
+pub const HELLO = 64;
+pub const CMD_FLAG = 128; // u64, at rank 1: the last command rank 0 has written
+pub const CMD_ACK = 192; // u64, at rank 0: the last command rank 1 has copied out
+pub const READY = 256; // u64: the peer has loaded its model
+pub const BEAT = 320; // u64: the peer's watchdog ran; a rank idle in no round still sees a dead peer through this
+
+// The sync page's words shared with pair.metal: POSTED last released exchange, FAILED give-ups, OBSERVED refusals.
+pub const POSTED = 0;
+pub const FAILED = 16;
+pub const OBSERVED = 20;
+
+pub const seam_failed: u64 = std.math.maxInt(u64);
+
+pub const Seam = struct { x: u32, ref: Ref };
+
+/// `Elem` is f32 (flip with pair.metal's SEAM_ELEM_BF16): bf16 double-rounds a seam, the 27B gate diverged at token 16.
+pub const Elem = f32;
+/// One element's bytes; a payload size in this file is `rows * width * elem_bytes`, never a literal.
+pub const elem_bytes: usize = @sizeOf(Elem);
+/// The element's name, for a log or a receipt that must say which payload it measured.
+pub const elem_name: []const u8 = switch (Elem) {
+    u16 => "bf16",
+    f32 => "f32",
+    else => @compileError("pair: Elem is u16 (a bf16's bits) or f32"),
+};
+/// Elements in one 32-bit window word: the relay and the link move whole words, so bf16 packs two and f32 one.
+pub const elems_per_word: usize = @sizeOf(u32) / elem_bytes;
+
+/// One seam payload's bytes: `rows` rows of `width` `Elem` each -- the wire's, the window slot's and the relay's unit.
+pub fn partBytes(rows: u32, width: u32) usize {
+    return @as(usize, rows) * width * elem_bytes;
+}
+
+/// The head seam's exchange: an (fp32 value, u32 id) a row under either element; pair_pick compares logits, not words.
+pub fn pickBytes(rows: u32) usize {
+    return @as(usize, rows) * @sizeOf(f32) * 2;
+}
+
+/// `addRms`'s payload: fp32 candidates whatever `Elem` is; that path adds into the fp32 stream and rounds once.
+pub fn streamBytes(rows: u32, width: u32) usize {
+    return @as(usize, rows) * width * @sizeOf(f32);
+}
+
+/// `sum`'s `out`: the bf16 frame, unchanged by the flip; an f32 payload reproduces one Mac's bf16(full) (~1e-7).
+pub fn frameBytes(rows: u32, width: u32) usize {
+    return @as(usize, rows) * width * @sizeOf(u16);
+}
+
+/// One fp32 value as the frame stores it (bf16, nearest even), the host half of `pair.metal`'s `frame_put`.
+pub fn toFrame(v: f32) u16 {
+    return bf16Bits(v);
+}
+
+/// An element's fp32 value. The payload's arithmetic is fp32 on both Macs, so this is where a `sum` operand enters it.
+pub fn fromElem(v: Elem) f32 {
+    return switch (Elem) {
+        u16 => @bitCast(@as(u32, v) << 16),
+        f32 => v,
+        else => @compileError("pair: Elem is u16 (a bf16's bits) or f32"),
+    };
+}
+
+/// One fp32 value as the payload stores it: bf16 rounds nearest-even, f32 is exact.
+pub fn toElem(v: f32) Elem {
+    return switch (Elem) {
+        u16 => bf16Bits(v),
+        f32 => v,
+        else => @compileError("pair: Elem is u16 (a bf16's bits) or f32"),
+    };
+}
+
+/// One rounding to bf16, nearest-even: the arithmetic `pair.metal`'s `pair_bf16_bits` does in the kernel.
+fn bf16Bits(v: f32) u16 {
+    const u: u32 = @bitCast(v);
+    return @truncate((u +% 0x7FFF +% ((u >> 16) & 1)) >> 16);
+}
+
+/// The seed pattern as a payload element: 1 + m/128, exact in bf16 and f32, so the flip keeps expected bytes.
+pub fn seedValue(r: u32, i: u32, salt: u16) Elem {
+    const k = r *% 5120 +% i *% 37;
+    const m: u32 = (salt & 0x1F) + ((k *% 53) & 0x1F);
+    return toElem(1.0 + @as(f32, @floatFromInt(m)) / 128.0);
+}
+
+pub fn writeElem(out: []u8, at: usize, v: Elem) void {
+    @memcpy(out[at * elem_bytes ..][0..elem_bytes], std.mem.asBytes(&v));
+}
+
+/// The kernels' argument block: no field is `Elem`, so its layout and pair.metal's struct do not move on the flip.
+pub const PairRows = extern struct { width: u32, stride: u32, rank: u32, x: u32, eps: f32, pad0: f32 = 0, pad1: f32 = 0, pad2: f32 = 0 };
+
+/// Between encoders only (core/segments.zig:59-66): fence, close, posted, wait, reopen, wait -- a real hand-off.
+pub fn seam(enc: *mtl.ComputeEncoder, fence: Fence, posted: mtl.SharedEvent, landed: mtl.SharedEvent, x: u32) void {
+    const cb = enc.commandBuffer();
+    const mode = enc.dispatchType();
+    fence.update(enc.*);
+    enc.end();
+    cb.signal(posted, @as(u64, x));
+    cb.waitFor(landed, @as(u64, x));
+    enc.* = cb.compute(mode);
+    fence.wait(enc.*);
+}

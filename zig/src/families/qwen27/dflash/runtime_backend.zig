@@ -111,7 +111,7 @@ pub const Backend = struct {
         const units = b.target.device.tensorUnits();
         const order = if (units) try core.lane_projection.RegOrder.init(b.target.device) else null;
         defer if (order) |o| o.deinit();
-        if (!units) b.simd = try simd.Pipelines.load(b.target.device);
+        if (!units) b.simd = try simd.Pipelines.load(b.target.device, .bf16);
         var rows: std.ArrayList(u16) = .empty;
         defer rows.deinit(b.allocator);
         var kept = b.checkpoint.tensors.iterator();

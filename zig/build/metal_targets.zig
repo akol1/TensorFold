@@ -278,8 +278,10 @@ pub fn metalTargets(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     const load_admission_run = b.addRunArtifact(load_admission_cases);
     b.step("test-flashnext-load-admission", "CPU-only Flash Next runtime quantization admission").dependOn(&load_admission_run.step);
     test_step.dependOn(&load_admission_run.step);
-    test_step.dependOn(dsv41_build.weights(b, target, optimize, metal));
-    const dsv41 = dsv41_build.checks(b, target, optimize, metal, mods.sources, mods.engine);
+    // The family reaches core through `@import("core")`; this facade owns exactly the files it names.
+    const core_root = b.createModule(.{ .root_source_file = b.path("zig/dsv41_core_family.zig"), .target = target, .optimize = optimize, .link_libc = true, .imports = &.{ .{ .name = "gpu_memory", .module = @import("gpu_memory.zig").module(b, target) }, .{ .name = "tokenizer", .module = b.createModule(.{ .root_source_file = b.path("zig/src/core/tokenizer/tokenizer.zig"), .target = target, .optimize = optimize, .link_libc = true }) }, .{ .name = "metal", .module = metal } } });
+    test_step.dependOn(dsv41_build.weights(b, target, optimize, metal, core_root));
+    const dsv41 = dsv41_build.checks(b, target, optimize, metal, mods.sources, mods.engine, core_root);
     test_step.dependOn(dsv41.device);
     test_step.dependOn(dsv41.reference);
     const pack_cache_cases = b.addTest(.{ .root_module = b.createModule(.{

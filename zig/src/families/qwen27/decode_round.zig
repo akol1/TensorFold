@@ -4,6 +4,7 @@ const mtl = @import("metal");
 const Model = @import("model.zig").Model;
 const Frame = @import("gpu_frame.zig").Frame;
 const forward = @import("forward.zig");
+const Ref = @import("projection.zig").Ref;
 /// Layers a verify encodes before committing them, so the GPU starts while the CPU encodes the rest.
 const commit_every = 4;
 const wts = @import("gpu_weights.zig");
@@ -57,6 +58,10 @@ pub const Runner = struct {
     images: ?image_rows.Images = null,
     /// A kept state's blit still reading a slot, by slot: the slot's next write waits for it (settleSlot).
     reading: [attn.planning.max_streams]?mtl.CommandBuffer = @splat(null),
+    /// A tensor-parallel rank's all-reduce, threaded straight into the layer program; null on one Mac.
+    reduce: ?forward.Reduce = null,
+    /// The pair's head-seam picks (one u32 a row), required with `reduce`: unexchanged halves make the ranks diverge.
+    picks: ?Ref = null,
 
     pub fn init(a: std.mem.Allocator, m: *Model, slots: u32, capacity: u32) !Runner {
         return initReady(a, m, slots, capacity, slots);
@@ -243,10 +248,15 @@ pub const Runner = struct {
         if (r.capture_taps) r.taps.begin();
         const pool = mtl.objc.Pool.push();
         defer pool.pop();
-        var stages = forward.Stages{ .model = r.model, .rows = @intCast(round.ids.len), .hooks = .{ .ptr = r, .gdn = gdnForward, .attention = attentionForward, .tap = if (r.capture_taps) tap else null }, .head = head, .images = placed.images };
+        var stages = forward.Stages{ .model = r.model, .rows = @intCast(round.ids.len), .hooks = .{ .ptr = r, .gdn = gdnForward, .attention = attentionForward, .tap = if (r.capture_taps) tap else null }, .head = head, .images = placed.images, .reduce = r.reduce, .picks = r.picks };
         r.last_gpu_seconds = @import("core").segments.runCommitting(r.model.device, &.{r.model.queue}, r.model.config.layers, .concurrent, &stages, commit_every) catch |err| {
             r.failed = true;
             return err;
+        };
+        // A seam cannot fail while encoding: the transport reports it out of band, and a broken pair fails the round.
+        if (r.reduce) |red| if (red.broken()) {
+            r.failed = true;
+            return error.PairFailed;
         };
         if (r.model.ane) |share| share.drain() catch |err| {
             r.failed = true;

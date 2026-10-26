@@ -9,7 +9,7 @@ pub const Plan = planning.Plan;
 pub const Cache = struct { keys: Ref, values: Ref, capacity: u32, key_stride: u32 = 0, value_stride: u32 = 0 };
 const CachePtrs = extern struct { keys: u64, values: u64 };
 const PackArgs = extern struct { rows: u32, packed_rows: u32, heads: u32 = 24, kv_heads: u32 = 4, dim: u32 = 256, group: u32 = 6 };
-const PromptArgs = extern struct { start: i32, rows: i32, chunks: i32, rp: i32, key_stride: i32, value_stride: i32, scale2: f32 };
+const PromptArgs = extern struct { start: i32, rows: i32, chunks: i32, rp: i32, key_stride: i32, value_stride: i32, scale2: f32, kv_heads: i32 };
 pub const Limits = struct {
     rows: u32 = 128,
     streams: u32 = 8,
@@ -353,7 +353,7 @@ pub const Attention = struct {
         // before M5 (no shared prefix) the partials take the tail's buffers, which hold every chunk's packed rows
         const parts = if (g.shared_prefix) [3]Field{ .poa, .pma, .pla } else [3]Field{ .pob, .pmb, .plb };
         if (!g.shared_prefix and @as(usize, chunks) * plan.tiles * 16 > @as(usize, scratch.tail_chunks) * scratch.limits.rows * 16) return error.AttentionLimits;
-        const args = PromptArgs{ .start = start, .rows = @intCast(plan.rows), .chunks = @intCast(chunks), .rp = @intCast(plan.tiles * 16), .key_stride = @intCast(binding.strides[0][0]), .value_stride = @intCast(binding.strides[0][1]), .scale2 = 0.0625 * std.math.log2e };
+        const args = PromptArgs{ .start = start, .rows = @intCast(plan.rows), .chunks = @intCast(chunks), .rp = @intCast(plan.tiles * 16), .key_stride = @intCast(binding.strides[0][0]), .value_stride = @intCast(binding.strides[0][1]), .scale2 = 0.0625 * std.math.log2e, .kv_heads = @intCast(g.kv_heads) };
         const pairs = prompt_threads / 64; // simdgroup pairs, each halving the head dim of one 16-row tile
         e.setPipeline(a.prompt.?[0]);
         bind(e, .{ scratch.get(.qa), binding.get(.caches) });

@@ -4,7 +4,8 @@
 using namespace metal;
 using namespace mpp::tensor_ops;
 constant constexpr int PG = 6, PD = 256, PH = 128, PCK = 512, PTK = 32;
-struct Q27PromptArgs { int start, rows, chunks, rp, key_stride, value_stride; float scale2; };
+// kv_heads is the rank's, not the model's: a split attention writes local node rows.
+struct Q27PromptArgs { int start, rows, chunks, rp, key_stride, value_stride; float scale2; int kv_heads; };
 typedef vec<float, 8> q27f8;
 typedef vec<bfloat, 8> q27b8;
 typedef vec<half, 8> q27h8;
@@ -166,5 +167,6 @@ kernel void q27_attn_prompt_merge(device const float* PO [[buffer(0)]], device c
     m = nm;
   }
   const int node = r / PG, head = hk * PG + r % PG;
-  for (int i = 0; i < DP; i++) OUT[((int64_t)node * (PG * 4) + head) * PD + lane * DP + i] = static_cast<bfloat>(o[i] / l);
+  const int64_t at = ((int64_t)node * (PG * args.kv_heads) + head) * PD + lane * DP;
+  for (int i = 0; i < DP; i++) OUT[at + i] = static_cast<bfloat>(o[i] / l);
 }

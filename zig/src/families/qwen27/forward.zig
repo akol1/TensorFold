@@ -16,16 +16,18 @@ pub const Mixer = struct {
     tap: ?*const fn (*anyopaque, mtl.ComputeEncoder, usize, Ref, u32) anyerror!void = null,
 };
 
-/// One exchange: `x` its index, `ref` this rank's fp32 partial (`core.pair.Elem`), so only the frame write rounds.
+/// One exchange: `x` its index, `ref` this rank's `width` columns of the seam in the window's slot for x.
 pub const Seam = struct { x: u32, ref: Ref };
 
-/// A rank's per-layer all-reduce half behind one interface: transport is a model flag, not a fork in the layer program.
+/// A rank's per-layer all-gather behind one interface: transport is a model flag, not a fork in the layer program.
 pub const Reduce = struct {
     ptr: *anyopaque,
     /// Pure, and taken BEFORE the producer kernel writes `ref`: this seam's index and where this rank's part goes.
     part: *const fn (*anyopaque) Seam,
-    /// Ships this rank's part, waits for the peer's, reopens the encoder: the caller uses the reopened copy.
-    sum: *const fn (*anyopaque, *mtl.ComputeEncoder, u32, Ref, Ref, u32, u32) void,
+    /// This rank's own columns of the seam's input rows into x's slot: a bf16 copy, so it carries the frame's bits.
+    stage: *const fn (*anyopaque, *mtl.ComputeEncoder, u32, Ref, u32, u32, u32) void,
+    /// Relays x, waits for the peer's columns, and reopens the encoder: the caller uses the reopened copy.
+    gather: *const fn (*anyopaque, *mtl.ComputeEncoder, u32, Ref, Ref, u32, u32, u32) void,
     /// Out of band: a seam cannot fail while encoding, so `failed()` is checked after each seam and command buffer.
     failed: *const fn (*anyopaque) bool,
     /// Head seam: this rank's argmax over `lo..lo+n` (stride `stride`) meets the peer's in `picks`, one u32 a row.
@@ -37,8 +39,14 @@ pub const Reduce = struct {
     pub fn nextX(r: Reduce) u32 {
         return r.part(r.ptr).x;
     }
-    pub fn apply(r: Reduce, e: *mtl.ComputeEncoder, x: u32, mine: Ref, out: Ref, rows: u32, width: u32) void {
-        r.sum(r.ptr, e, x, mine, out, rows, width);
+    /// A seam's input rows: stage this rank's columns of `src`, then take both halves of the frame into `out`.
+    pub fn rowsIn(r: Reduce, e: *mtl.ComputeEncoder, se: Seam, src: Ref, rows: u32, width: u32, stride: u32, out: Ref, out_stride: u32) void {
+        r.stage(r.ptr, e, se.x, src, rows, width, stride);
+        r.gather(r.ptr, e, se.x, se.ref, out, rows, width, out_stride);
+    }
+    /// A seam's output rows: the producer wrote this rank's rows to `se.ref`; both ranks' rows land in `out`.
+    pub fn rowsOut(r: Reduce, e: *mtl.ComputeEncoder, se: Seam, out: Ref, rows: u32, width: u32, out_stride: u32) void {
+        r.gather(r.ptr, e, se.x, se.ref, out, rows, width, out_stride);
     }
     pub fn pick(r: Reduce, e: *mtl.ComputeEncoder, x: u32, logits: Ref, stride: u32, lo: u32, n: u32, rows: u32, picks: Ref) void {
         r.argmax.?(r.ptr, e, x, logits, stride, lo, n, rows, picks);
@@ -112,15 +120,25 @@ pub const Stages = struct {
             .linear => |g| g.out,
             .attention => |a| a.out,
         };
-        // Seam A: split attention's o_proj rows are partial in seam payload, so `bf16(mine + peer)` rounds once.
+        // Seam A: a rank owns output rows, not a K half: gather the mixer's columns before o_proj, its rows after.
         const split_attention = s.reduce != null and m.shard.splitsAttention();
-        var seam_a: ?Seam = null;
-        if (split_attention) seam_a = s.reduce.?.next();
-        if (seam_a) |sm| try m.kernels.quantPart(e, out, f.get(.mixer_out), null, f.get(.dims), sm.ref, s.rows) else try m.kernels.quant(e, out, f.get(.mixer_out), null, f.get(.dims), f.get(.output), s.rows);
-        e.barrier();
-        if (seam_a) |sm| {
-            s.reduce.?.apply(&e, sm.x, sm.ref, f.get(.output), s.rows, h);
-            lane.enc = e; // the seam reopened the encoder; the lane carries it to the next layer
+        var out_in = f.get(.mixer_out);
+        if (split_attention) {
+            std.debug.assert(m.shard.ranks == 2); // two Macs: gather's other half is the peer's half
+            const cols: u32 = @intCast(@divExact(out.k, 2)); // this rank's mixer columns, rows contiguous in `.mixer_out`
+            const first = s.reduce.?.next();
+            s.reduce.?.rowsIn(&e, first, out_in, s.rows, cols, cols, f.get(.mixed), out.k);
+            lane.enc = e; // rowsIn reopened the encoder; the lane carries it to the next layer
+            if (s.reduce.?.broken()) return error.PairFailed;
+            e.barrier();
+            out_in = f.get(.mixed);
+        }
+        const product = if (split_attention) s.reduce.?.next() else null;
+        if (product) |sm| try m.kernels.quant(lane.enc, out, out_in, null, f.get(.dims), sm.ref, s.rows) else try m.kernels.quant(lane.enc, out, out_in, null, f.get(.dims), f.get(.output), s.rows);
+        lane.enc.barrier();
+        if (product) |sm| {
+            s.reduce.?.rowsOut(&e, sm, f.get(.output), s.rows, out.n, h);
+            lane.enc = e;
             if (s.reduce.?.broken()) return error.PairFailed;
             e.barrier();
         }
@@ -161,12 +179,25 @@ pub const Stages = struct {
             try m.kernels.mlp(e, f.get(.mixed), up, f.get(.dims), f.get(.activated), f.get(.act_sums), width, s.rows);
         }
         lane.enc.barrier();
-        // Seam B: the MLP's rows are split on every tensor-parallel rank, so down_proj is always a partial there.
-        const seam_b = if (s.reduce) |r| r.next() else null;
-        if (seam_b) |sm| try m.kernels.quantPart(lane.enc, layer.down, f.get(.activated), sums(f, .act_sums, s.rows), f.get(.dims), sm.ref, s.rows) else try m.kernels.quant(lane.enc, layer.down, f.get(.activated), sums(f, .act_sums, s.rows), f.get(.dims), f.get(.output), s.rows);
+        // Seam B: gate|up gives each rank its columns, so down_proj's full K needs the peer's; `.mlp` keeps it whole.
+        var down_in = f.get(.activated);
+        const acts = if (s.reduce) |r| r.next() else null;
+        if (acts) |sm| {
+            s.reduce.?.rowsIn(&e, sm, down_in, s.rows, width, width, f.get(.mixed), layer.down.k);
+            lane.enc = e;
+            if (s.reduce.?.broken()) return error.PairFailed;
+            e.barrier();
+            down_in = f.get(.mixed);
+        }
+        // The MLP is column-split on every pair (`.mlp` mode splits it too), so its seam is unconditional there.
+        const split_down = layer.down.n != h;
+        const seam_b = if (s.reduce != null and split_down) s.reduce.?.next() else null;
+        // A gathered frame's group sums are the peer's to write, so the kernel derives them where there is no peer.
+        const down_sums: ?@import("quant_gpu.zig").Sums = if (s.reduce == null) sums(f, .act_sums, s.rows) else null;
+        if (seam_b) |sm| try m.kernels.quant(lane.enc, layer.down, down_in, down_sums, f.get(.dims), sm.ref, s.rows) else try m.kernels.quant(lane.enc, layer.down, down_in, down_sums, f.get(.dims), f.get(.output), s.rows);
         lane.enc.barrier();
         if (seam_b) |sm| {
-            s.reduce.?.apply(&e, sm.x, sm.ref, f.get(.output), s.rows, h);
+            s.reduce.?.rowsOut(&e, sm, f.get(.output), s.rows, layer.down.n, h);
             lane.enc = e;
             if (s.reduce.?.broken()) return error.PairFailed;
             e.barrier();

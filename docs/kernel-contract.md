@@ -127,14 +127,15 @@ float64 output class, without an inherited exception.
 ## Coverage
 
 Metal: softmax, RMS norm, bf16 top-k, the row projection (3, 4, 6 and 8 bits), affine_mm (4 and 8 bits), simd_qmm
-(4 bits, and its fp32 store: the same tiles compiled with `TF_OUT` set to float, so a rank can write its exact part
-into a seam) and simd_qmm_bits (3, 6 and 8 bits), and the lane projection (6-bit groups of 32 on every chip; 4- and
-8-bit formats on the M5's tensor units, where its reg kernel must equal the cooperative one bit for bit), and
-tile_qmm's prompt tiles and their decode twin (4, 6 and 8 bits; the twin bit-equal to the tiles), and the TP seam's
-four exchange kernels (`pair_add_rms`, `pair_argmax` and `pair_pick`; the input is one rank's own part plus the
-peer's bytes, so an exchange is a function of those bytes alone, and `pair_argmax` and `pair_pick` state their own NaN
-and tie rules). Gate 5 also holds
-the rest of tile_qmm's pipelines and GLM-5.3-Flash's hc_expand_10.
+(4 bits, and its fp32 store: the same tiles compiled with `TF_OUT` set to float) and simd_qmm_bits (3, 6 and 8 bits),
+and the lane projection (6-bit groups of 32 on every chip; 4- and 8-bit formats on the M5's tensor units, where its
+reg kernel must equal the cooperative one bit for bit), and tile_qmm's prompt tiles and their decode twin (4, 6 and 8
+bits; the twin bit-equal to the tiles), and the TP seam's five kernels: `pair_add_rms` on the fp32 stream, and the bf16
+frame's `pair_stage`, `pair_gather`, `pair_argmax` and `pair_pick`. A seam row is one rank's own window plus the peer's
+bytes, so each kernel is a function of those bytes alone: `pair_stage` copies one rank's half of a frame into the slot
+the relay sends, `pair_gather` writes both halves at the row offsets its rank owns with no arithmetic between them, so
+no exchange rounds a sum across ranks, and `pair_argmax` and `pair_pick` state their own NaN and tie rules. Gate 5 also
+holds the rest of tile_qmm's pipelines and GLM-5.3-Flash's hc_expand_10.
 CUDA: the RMS norm rows (16-byte form and the fp32-out tree), the bf16 residual's norm tails (MLX's rounded rows and
 the once-rounded ones, each checked on its residual and its output, with four controls each dropping a rounding point), Nemotron's router logits (and their 128-row tiles,
 bit-equal to them) and top-k, the latent top-k's decode form (bit-equal to `tf_super_topk`), the latent combine and
@@ -175,8 +176,7 @@ RADIO's fused bias, activation and residual (`tf_vit_bias_act`) replaces `tf_vit
 CUDA also checks GLM-5.3-Flash's KV page kernels on a page table out of order: the latent write and the pooled keys
 (`tf_glm_lat_write`, `tf_glm_pool_keys`), the index scores and the selected tokens' rows (`tf_glm_scores`,
 `tf_glm_dsa_tokens`), and the MLA chunks through their merge (`tf_glm_chunks_16` and `tf_glm_chunks_32`, dense and
-sparse). Its prompt indexer (`tf_glm_index_scores`, `tf_glm_index_pools`) is bit-equal to `tf_glm_scores` and
-`tf_glm_select_rows`; the pools' stated rule ranks any NaN above +inf, as the GPU's `s + 0` makes every NaN one positive NaN.
+sparse).
 
 GLM's Metal window projections register narrow and wide rows at 2, 3, 4, 5, 6 and 8 bits, plus both gathered paths.
 Independent FP64 linear cases accompany byte replacements against frozen pre-window-optimization kernels.
@@ -196,8 +196,8 @@ and its split-K form, prompt16's FP8 tile, qmmf's FP4 32-row cluster tile, five 
 and FP32-output paths, FP8G's 32-row cluster tile with FP32 output, the common EXL3 prompt products, Super's
 decode-sized latent top-k and NVFP4 up experts, the Mamba scan and Super's NVFP4 prompt down kernels, three of
 GLM-5.3-Flash's packed matmuls and three of its DFlash2 launches, and the training launches it compiles differently,
-and nvcc 13.3 keeps 13.2's and changes `tf_nemo_topk` on sm_120 and sm_121, four of GLM-5.3-Flash's KV page
-launches and its two prompt-indexer launches. `kernel-contract` and
+and nvcc 13.3 keeps 13.2's and changes `tf_nemo_topk` on sm_120 and sm_121 and four of GLM-5.3-Flash's KV page
+launches. `kernel-contract` and
 `kernel-contract-limits` read the release from each image's `.note.nv.tkinfo`, check the image against the newest set
 at or below that release (13.0's when an image names none), and print which set they used. A release with no set of
 its own is checked against the one below it, so its differences show as stale records: re-derive them with

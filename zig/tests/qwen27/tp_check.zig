@@ -16,13 +16,42 @@ const help =
     \\  stage 3 (the default) runs both.
     \\--chunk 1 (default) keeps the prompt on the decode path; > 1 uses the prompt kernels. Greedy only, no drafter.
     \\--prompt-file F takes the prompt ids from F; --forced-file F feeds F's ids instead of each side's own picks.
+    \\--taps A,B,C,D,E hashes five layers' post-prompt hidden rows on every side (stage 2 divergence localisation).
     \\Synthetic ids 1000.., no tokenizer, no weights written; JSON receipt on stdout, errors on stderr.
     \\Run with no --model DIR to print SKIP and exit 0: the suite does that on hosts without the checkpoint.
 ;
 
 var dump = false;
+/// Five layers whose post-block residuals the tap planes keep, for stage 2 divergence localisation (`--taps`).
+var tap_ids: ?[5]usize = null;
 fn hashBuffer(h: anytype, b: mtl.Buffer) void {
     h.update(b.contents()[0..b.length()]);
+}
+
+/// Five tapped planes of one round: post-block hidden rows, plane by plane, so a divergence names its layer.
+fn tapDigests(r: *const Runner) ![5][32]u8 {
+    var out: [5][32]u8 = undefined;
+    for (0..out.len) |i| {
+        const plane = try r.taps.plane(i);
+        var h = std.crypto.hash.sha2.Sha256.init(.{});
+        h.update(plane.buffer.contents()[plane.offset..][0 .. @as(usize, r.taps.rows) * r.taps.width * 2]);
+        h.final(&out[i]);
+    }
+    return out;
+}
+
+/// `--taps 0,1,2,3,4`: five layer indices, ascending, whose post-block residuals stage 2 keeps for comparison.
+fn readTaps(text: []const u8) ![5]usize {
+    var out: [5]usize = undefined;
+    var it = std.mem.tokenizeScalar(u8, text, ',');
+    var n: usize = 0;
+    while (it.next()) |token| {
+        if (n == out.len) return error.BadTapList;
+        out[n] = try std.fmt.parseInt(usize, token, 10);
+        n += 1;
+    }
+    if (n != out.len) return error.BadTapList;
+    return out;
 }
 
 /// Everything the next round reads back: both KV caches a layer slot, the GDN states, the slots' offsets.
@@ -105,6 +134,8 @@ const Local = struct {
     top2: []TopTwo,
     logits: [][32]u8,
     state: [32]u8,
+    /// Post-block residuals of the prompt round at `tap_ids`, hashed on this side's own hidden state.
+    taps: [5][32]u8 = undefined,
     /// `MTLDevice.currentAllocatedSize` with this one model resident (the engine's own memory accounting).
     resident: u64,
 };
@@ -116,7 +147,13 @@ fn localRun(a: std.mem.Allocator, io: std.Io, dir: []const u8, ids: []const u32,
     var runner = try Runner.init(a, m, 1, rowsFor(ids.len, steps));
     defer runner.deinit();
     const s = Session{ .runner = &runner };
+    if (tap_ids) |layers| {
+        runner.capture_taps = true;
+        runner.taps.ids = layers;
+    }
     try s.prefill(ids, chunk);
+    const taps = try tapDigests(&runner);
+    runner.capture_taps = false;
     const state = try s.fingerprint();
     dumpRow("single", m, &runner);
     const resident = m.device.allocated();
@@ -133,7 +170,7 @@ fn localRun(a: std.mem.Allocator, io: std.Io, dir: []const u8, ids: []const u32,
         // a forced replay feeds the recorded history, so both sides stand at the same prefix when they compare
         if (i + 1 < steps) try s.step(if (force) |f| f[i] else tokens[i]);
     }
-    return .{ .tokens = tokens, .top2 = top2, .logits = logits, .state = state, .resident = resident };
+    return .{ .tokens = tokens, .top2 = top2, .logits = logits, .state = state, .taps = taps, .resident = resident };
 }
 
 /// One rank of the pair: its shard, its seam transport, and the stream it produced.
@@ -151,7 +188,11 @@ const Side = struct {
     tokens: []u32 = &.{},
     top2: []TopTwo = &.{},
     logits: [][32]u8 = &.{},
+    /// When dumping, each rank copies its span of every step's logits here, so the whole row can be hashed.
+    whole: ?[]u8 = null,
     state: [32]u8 = undefined,
+    /// Post-block residuals of the prompt round at `tap_ids`, hashed on this rank's own hidden state.
+    taps: [5][32]u8 = undefined,
     err: ?anyerror = null,
 
     fn open(s: *Side, a: std.mem.Allocator, io: std.Io, dir: []const u8, mode: q.config.Mode, bytes: usize) !void {
@@ -164,7 +205,7 @@ const Side = struct {
         errdefer s.picks.deinit();
         s.lb = try pair.Loopback.init(s.m.device, bytes, s.rank);
         errdefer s.lb.deinit();
-        s.runner.reduce = .{ .ptr = &s.lb, .part = loopPart, .sum = loopSum, .failed = loopFailed, .argmax = loopArgmax };
+        s.runner.reduce = .{ .ptr = &s.lb, .part = loopPart, .stage = loopStage, .gather = loopGather, .failed = loopFailed, .argmax = loopArgmax };
         s.runner.picks = .{ .buffer = s.picks, .offset = 0 };
         s.tokens = try a.alloc(u32, s.steps);
         s.top2 = try a.alloc(TopTwo, s.steps);
@@ -190,14 +231,26 @@ const Side = struct {
         const pool = mtl.objc.Pool.push();
         defer pool.pop();
         const ses = Session{ .runner = &s.runner };
+        if (tap_ids) |layers| {
+            s.runner.capture_taps = true;
+            s.runner.taps.ids = layers;
+        }
         try ses.prefill(s.ids, s.chunk);
+        s.taps = try tapDigests(&s.runner);
+        s.runner.capture_taps = false;
         s.state = try ses.fingerprint();
         trace(s, "prefill");
         dumpRow(if (s.rank == 0) "pair-rank0" else "pair-rank1", s.m, &s.runner);
         for (0..s.steps) |i| {
+            const values = s.m.frame.get(.logits).buffer.slice(u16, s.m.config.vocab);
             s.tokens[i] = try ses.greedy();
-            s.top2[i] = try q.session.topTwo(s.m.frame.get(.logits).buffer.slice(u16, s.m.config.vocab));
+            s.top2[i] = try q.session.topTwo(values);
             s.logits[i] = shaLogits(s.m);
+            if (s.whole) |w| {
+                const span = s.m.shard.vocabRows();
+                const row = i * @as(usize, s.m.shard.global.vocab) * 2;
+                @memcpy(w[row + span.from * 2 ..][0 .. span.len * 2], std.mem.sliceAsBytes(values));
+            }
             trace(s, "step");
             if (i + 1 < s.steps) try ses.step(if (s.force) |f| f[i] else s.tokens[i]);
         }
@@ -216,9 +269,14 @@ fn loopPart(p: *anyopaque) q.forward.Seam {
     return .{ .x = seam.x, .ref = .{ .buffer = seam.ref.buf, .offset = seam.ref.off } };
 }
 
-fn loopSum(p: *anyopaque, e: *mtl.ComputeEncoder, x: u32, mine: q.forward.Ref, out: q.forward.Ref, rows: u32, width: u32) void {
+fn loopStage(p: *anyopaque, e: *mtl.ComputeEncoder, x: u32, src: q.forward.Ref, rows: u32, width: u32, stride: u32) void {
     const lb: *pair.Loopback = @ptrCast(@alignCast(p));
-    lb.sum(e, x, .{ .buf = mine.buffer, .off = mine.offset }, .{ .buf = out.buffer, .off = out.offset }, rows, width);
+    lb.stage(e, x, .{ .buf = src.buffer, .off = src.offset }, rows, width, stride);
+}
+
+fn loopGather(p: *anyopaque, e: *mtl.ComputeEncoder, x: u32, mine: q.forward.Ref, out: q.forward.Ref, rows: u32, width: u32, out_stride: u32) void {
+    const lb: *pair.Loopback = @ptrCast(@alignCast(p));
+    lb.gather(e, x, .{ .buf = mine.buffer, .off = mine.offset }, .{ .buf = out.buffer, .off = out.offset }, rows, width, out_stride);
 }
 
 fn loopFailed(p: *anyopaque) bool {
@@ -309,6 +367,8 @@ pub fn main(init: std.process.Init) !void {
             prompt_file = value;
         } else if (std.mem.eql(u8, arg, "--forced-file")) {
             forced_file = value;
+        } else if (std.mem.eql(u8, arg, "--taps")) {
+            tap_ids = try readTaps(value);
         } else return error.UnknownOption;
     }
     if (dir == null or steps == 0 or steps > 256 or count == 0 or count > 512 or chunk == 0 or chunk > 128 or stage == 0 or stage > 3) return error.BadOptions;
@@ -364,8 +424,8 @@ pub fn main(init: std.process.Init) !void {
     if (stage & 2 == 0) return;
     const ref = reference orelse return error.StageTwoNeedsTheSingleMacStream;
 
-    // the window holds the widest prompt round: rows x 5120 payload elements; both seams are 5120 wide
-    const bytes = pair.partBytes(128, 5120);
+    // The window holds the widest prompt round: the MLP seam stages a bf16 row of this rank's half of `intermediate`.
+    const bytes = pair.stageBytes(128, 17408 / 2);
     const zero = try a.create(Side);
     const one = try a.create(Side);
     zero.* = .{ .rank = 0, .ids = ids, .steps = steps, .chunk = chunk, .force = force };
@@ -378,6 +438,11 @@ pub fn main(init: std.process.Init) !void {
     const both = zero.m.device.allocated();
     const working = zero.m.device.maxWorkingSet();
     const global_vocab = zero.m.shard.global.vocab;
+
+    // Dumping also keeps every step's logits row whole, so the pair's row can be hashed against the single Mac's row.
+    const whole: ?[]u8 = if (dump) try a.alloc(u8, steps * @as(usize, global_vocab) * 2) else null;
+    zero.whole = whole;
+    one.whole = whole;
 
     var stop = std.atomic.Value(bool).init(false);
     const a2b = try std.Thread.spawn(.{}, pump, .{ &zero.lb, &one.lb, &stop });
@@ -416,6 +481,37 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("[audit] x_rank0={d} x_rank1={d} mismatched_exchanges={d} first_bad={?d}\n", .{ x0, x1, bad, first_bad });
     }
 
+    // A tapped layer whose hidden rows differ names where a seam stops being bit-exact; the logits only show the drift.
+    var first_tap_diff: ?usize = null;
+    if (tap_ids) |layers| for (layers, 0..) |layer, at| {
+        const zero_hex = std.fmt.bytesToHex(zero.taps[at], .lower);
+        const one_hex = std.fmt.bytesToHex(one.taps[at], .lower);
+        const want_hex = std.fmt.bytesToHex(ref.taps[at], .lower);
+        std.debug.print("[taps] layer={d} single={s} rank0={s} rank1={s}\n", .{ layer, want_hex[0..], zero_hex[0..], one_hex[0..] });
+        if (first_tap_diff == null and !std.mem.eql(u8, &ref.taps[at], &zero.taps[at]) and !std.mem.eql(u8, &ref.taps[at], &one.taps[at])) first_tap_diff = layer;
+    };
+
+    // The token comparison only sees a tie when one flips; hashing every step's whole row shows the first bit of drift.
+    var first_logit_step: ?usize = null;
+    if (whole) |w| {
+        const row_bytes = @as(usize, global_vocab) * 2;
+        for (0..steps) |at| {
+            var hash = std.crypto.hash.sha2.Sha256.init(.{});
+            hash.update(w[at * row_bytes ..][0..row_bytes]);
+            var got: [32]u8 = undefined;
+            hash.final(&got);
+            if (std.mem.eql(u8, &got, &ref.logits[at])) continue;
+            first_logit_step = at;
+            const merged = mergeTop2(.{ 0, @intCast(zero.m.config.vocab) }, .{ zero.top2[at], one.top2[at] });
+            const want = ref.top2[at];
+            std.debug.print("[logits] first_differing_step={d} single={d}@{d},{d}@{d} pair={d}@{d},{d}@{d}\n", .{
+                at, want.ids[0], want.logits[0], want.ids[1], want.logits[1], merged.ids[0], merged.logits[0], merged.ids[1], merged.logits[1],
+            });
+            break;
+        }
+        std.debug.print("[logits] steps_compared={d} first_differing_step={?d}\n", .{ steps, first_logit_step });
+    }
+
     var first_difference: ?usize = null;
     for (ref.tokens, zero.tokens, 0..) |want, got, at| if (first_difference == null and want != got) {
         first_difference = at;
@@ -452,6 +548,9 @@ pub fn main(init: std.process.Init) !void {
         .rank0_top2 = if (first_difference) |at| zero.top2[at] else null,
         .rank1_top2 = if (first_difference) |at| one.top2[at] else null,
         .pair_merged_top2 = merged,
+        .pair_logits_compared = whole != null,
+        .pair_logits_byte_equal = if (whole == null) null else first_logit_step == null,
+        .pair_first_logits_difference = first_logit_step,
         .bad_pick_at = bad_pick,
         .seam_gave_up_rank0 = zero.lb.gaveUp(),
         .seam_gave_up_rank1 = one.lb.gaveUp(),
@@ -469,4 +568,5 @@ pub fn main(init: std.process.Init) !void {
     if (!ranks_agree or bad_pick != null) return error.RanksDisagree;
     if (zero.lb.gaveUp() != 0 or one.lb.gaveUp() != 0) return error.SeamGaveUp;
     if (first_difference != null) return error.PairTokensDifferFromSingleMac;
+    if (first_logit_step != null) return error.PairLogitsDifferFromSingleMac;
 }

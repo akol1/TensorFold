@@ -22,6 +22,8 @@ pub const elem_bytes = pair_layout.elem_bytes;
 pub const elem_name = pair_layout.elem_name;
 pub const elems_per_word = pair_layout.elems_per_word;
 pub const partBytes = pair_layout.partBytes;
+pub const stageBytes = pair_layout.stageBytes;
+pub const gatherBytes = pair_layout.gatherBytes;
 pub const pickBytes = pair_layout.pickBytes;
 pub const streamBytes = pair_layout.streamBytes;
 pub const frameBytes = pair_layout.frameBytes;
@@ -104,7 +106,8 @@ pub const Pair = struct {
     win: []u8,
     wbuf: mtl.Buffer,
     add_rms: mtl.Pipeline,
-    sum_pipe: mtl.Pipeline,
+    stage_pipe: mtl.Pipeline,
+    gather_pipe: mtl.Pipeline,
     argmax_pipe: mtl.Pipeline,
     pick_pipe: mtl.Pipeline,
     /// Orders the window's untracked writes across the encoders a seam splits.
@@ -174,7 +177,8 @@ pub const Pair = struct {
             .win = win,
             .wbuf = try owned.keep(gpa, try device.bufferNoCopy(win.ptr, win.len, opts)),
             .add_rms = try owned.keep(gpa, try mtl.Pipeline.init(device, lib_m, "pair_add_rms", false)),
-            .sum_pipe = try owned.keep(gpa, try mtl.Pipeline.init(device, lib_m, "pair_sum", false)),
+            .stage_pipe = try owned.keep(gpa, try mtl.Pipeline.init(device, lib_m, "pair_stage", false)),
+            .gather_pipe = try owned.keep(gpa, try mtl.Pipeline.init(device, lib_m, "pair_gather", false)),
             .argmax_pipe = try owned.keep(gpa, try mtl.Pipeline.init(device, lib_m, "pair_argmax", false)),
             .pick_pipe = try owned.keep(gpa, try mtl.Pipeline.init(device, lib_m, "pair_pick", false)),
             .fence = fence,
@@ -269,7 +273,7 @@ pub const Pair = struct {
         p.rd.signal(p.peer, p.l.flags() + pair_layout.BEAT, p.beats) catch p.broken.store(true, .release);
     }
 
-    /// The next exchange: take it before the producer writes, then pass the same x to sum/addRms/argmax.
+    /// The next exchange: take it before the producer writes, then pass the same x to stage/gather/addRms/argmax.
     pub fn nextX(p: *const Pair) u32 {
         return @truncate(p.x + 1);
     }
@@ -304,15 +308,27 @@ pub const Pair = struct {
         e.dispatchGroups(.{ .width = rows }, .{ .width = 256 });
     }
 
-    /// After `part()`: send, wait for the peer's, out = frame(float(mine) + float(peer)), one rounding, same bits.
-    pub fn sum(p: *Pair, e: *mtl.ComputeEncoder, x: u32, mine: Ref, out: Ref, rows: u32, width: u32) void {
-        if (rows == 0 or width == 0 or width % elems_per_word != 0) @panic("pair: sum() wants rows > 0 and a width that fills whole window words");
-        if (mine.buf.id != p.wbuf.id or mine.off != p.l.send(x)) @panic("pair: sum()'s part is not the region part() returned");
-        p.queue(x, partBytes(rows, width));
-        seam(e, p.fence, p.posted, p.landed, x);
-        e.setPipeline(p.sum_pipe);
+    /// Before `seam`: this rank's `width` columns of `rows` rows from `src` into the slot, bf16 to bf16, no arithmetic.
+    pub fn stage(p: *Pair, e: *mtl.ComputeEncoder, x: u32, src: Ref, rows: u32, width: u32, stride: u32) void {
+        if (rows == 0 or width == 0 or width > stride) @panic("pair: stage() wants rows > 0 and a width inside the source row");
+        e.setPipeline(p.stage_pipe);
         e.setBuffer(p.wbuf, p.l.sync(), 0);
-        e.setValue(PairRows{ .width = width, .stride = width, .rank = p.rank, .x = x, .eps = 0 }, 1);
+        e.setValue(PairRows{ .width = width, .stride = stride, .rank = p.rank, .x = x, .eps = 0 }, 1);
+        e.setBuffer(src.buf, src.off, 2);
+        e.setBuffer(p.wbuf, p.l.send(x), 3);
+        e.dispatchGroups(.{ .width = rows }, .{ .width = 256 });
+    }
+
+    /// After `stage` (or the producer): relay, then pack this rank's `width` at `rank * width` and the peer's after.
+    pub fn gather(p: *Pair, e: *mtl.ComputeEncoder, x: u32, mine: Ref, out: Ref, rows: u32, width: u32, out_stride: u32) void {
+        if (rows == 0 or width == 0 or width % elems_per_word != 0) @panic("pair: gather() wants rows > 0 and a width that fills whole window words");
+        if (out_stride < 2 * width) @panic("pair: gather()'s frame row is narrower than both halves");
+        if (mine.buf.id != p.wbuf.id or mine.off != p.l.send(x)) @panic("pair: gather()'s part is not the region part() returned");
+        p.queue(x, stageBytes(rows, width));
+        seam(e, p.fence, p.posted, p.landed, x);
+        e.setPipeline(p.gather_pipe);
+        e.setBuffer(p.wbuf, p.l.sync(), 0);
+        e.setValue(PairRows{ .width = width, .stride = out_stride, .rank = p.rank, .x = x, .eps = 0 }, 1);
         e.setBuffer(mine.buf, mine.off, 2);
         e.setBuffer(p.wbuf, p.l.recv(x), 3);
         e.setBuffer(out.buf, out.off, 4);
@@ -465,8 +481,8 @@ test "the window's regions do not overlap and its words sit on their pages" {
 
 test "the parity ring alternates and one sentinel releases every exchange" {
     try std.testing.expect(slotOf(1) == .b and slotOf(2) == .a and slotOf(3) == .b);
-    const l: Layout = .{ .slot = pages(partBytes(16, 5120)) };
+    const l: Layout = .{ .slot = pages(stageBytes(16, 5120)) };
     try std.testing.expect(l.recv(1) == l.slot and l.recv(2) == 0 and l.send(2) == 2 * l.slot + PAGE);
-    try std.testing.expectEqual(pages(partBytes(16, 5120)), l.slot); // the 27B's 16-row prefill part, page-rounded
+    try std.testing.expectEqual(pages(stageBytes(16, 5120)), l.slot); // the 27B's 16-row prefill part, page-rounded
     try std.testing.expect(seam_failed > std.math.maxInt(u32)); // every waitFor(x) in a buffer is satisfied by it
 }

@@ -1,4 +1,4 @@
-//! The pair seam's four kernels (pair.metal): what pair.zig launches and the float64 rules the gates check; no rank.
+//! The pair seam's five kernels (core/pair.metal): what pair.zig launches and the float64 rules the gates check.
 const std = @import("std");
 const mtl = @import("metal");
 const contract = @import("contract");
@@ -9,10 +9,10 @@ const c = contract.spec;
 const g = contract.gates;
 const rows_k = contract.rows;
 
-/// The seam's four kernels; the tail of each registry name is the MSL symbol launchOf hands the source.
-pub const Which = enum { add_rms, sum, argmax, pick };
+/// The seam's five kernels; the tail of each registry name is the MSL symbol launchOf hands the source.
+pub const Which = enum { add_rms, stage, gather, argmax, pick };
 
-pub const all = [_]Which{ .add_rms, .sum, .argmax, .pick };
+pub const all = [_]Which{ .add_rms, .stage, .gather, .argmax, .pick };
 
 /// What pair.zig dispatches per kernel, so `init` can compare it against Metal's own reflection.
 pub const Launched = struct { threads: u32, tg_memory: u32 };
@@ -20,7 +20,8 @@ pub const Launched = struct { threads: u32, tg_memory: u32 };
 pub fn launch(w: Which) Launched {
     return switch (w) {
         .add_rms => .{ .threads = 256, .tg_memory = 32 },
-        .sum => .{ .threads = 256, .tg_memory = 0 },
+        .stage => .{ .threads = 256, .tg_memory = 0 },
+        .gather => .{ .threads = 256, .tg_memory = 0 },
         .argmax => .{ .threads = 1024, .tg_memory = 256 },
         .pick => .{ .threads = 32, .tg_memory = 0 },
     };
@@ -30,7 +31,8 @@ pub fn launch(w: Which) Launched {
 pub fn symbol(w: Which) []const u8 {
     return switch (w) {
         .add_rms => "pair_add_rms",
-        .sum => "pair_sum",
+        .stage => "pair_stage",
+        .gather => "pair_gather",
         .argmax => "pair_argmax",
         .pick => "pair_pick",
     };
@@ -40,7 +42,8 @@ pub fn symbol(w: Which) []const u8 {
 pub fn name(w: Which) []const u8 {
     return switch (w) {
         .add_rms => "metal pair add_rms pair_add_rms",
-        .sum => "metal pair sum pair_sum",
+        .stage => "metal pair stage pair_stage",
+        .gather => "metal pair gather pair_gather",
         .argmax => "metal pair argmax pair_argmax",
         .pick => "metal pair pick pair_pick",
     };
@@ -68,12 +71,12 @@ fn noSums(_: c.Shape) usize {
 }
 
 const add_why = "y follows the sum of squares as ss^-1/2 and stays fp32: a bf16 sum's error is 2^-8 of the norm";
-const sum_why = "one rounding of an exact fp32 sum: a bf16 accumulator would round every partial, and this cannot";
+const move_why = "a move writes each bf16 element as it read it: no sum, no rounding, so no accumulator's error can enter";
 
 const argmax_rule = "a winner is (value bits, id): NaN loses every comparison, so a row of only NaNs reports the -inf sentinel with id 0xFFFFFFFF";
 const pick_rule = "the pick copies one rank's (value, id) word pair; an id equal to 0xFFFFFFFF is how a broken link reads";
 
-/// A kernel's spec. The raw-output two check themselves, so their shape gate skips the float64 comparison.
+/// A kernel's spec. The raw kernels check themselves; the two moves' bound is exact, so gate 3 keeps every edge.
 pub fn spec(w: Which) c.Spec {
     return switch (w) {
         .add_rms => .{
@@ -92,17 +95,18 @@ pub fn spec(w: Which) c.Spec {
             },
             .sums = .{ .f16 = 0, .bf16 = 0, .exact = false, .why = add_why },
         },
-        .sum => .{
+        // One spec for both moves; a gather's `n` is its frame row stride, so the second shape is seam A's 17,408 row.
+        .stage, .gather => .{
             .name = name(w),
             .accum = .none,
             .depth = noSums,
             .out = .bf16,
             .tiles = .{ .{}, .{}, .{ .size = 256, .step = 256, .min = 256 } },
-            .served = &.{
-                .{ .rows = 8, .n = 5120, .k = 5120 },
-                .{ .rows = 2, .n = 256, .k = 256 },
-            },
-            .sums = .{ .why = sum_why },
+            .served = if (w == .stage)
+                &.{.{ .rows = 8, .n = 5120, .k = 5120 }}
+            else
+                &.{ .{ .rows = 8, .n = 10240, .k = 5120 }, .{ .rows = 8, .n = 10496, .k = 5120 } },
+            .sums = .{ .f16 = 0, .bf16 = 0, .exact = false, .why = move_why },
         },
         .argmax => .{
             .name = name(w),
@@ -124,7 +128,7 @@ pub fn spec(w: Which) c.Spec {
     };
 }
 
-/// `constant PairRows&` at buffer 1 of both seam kernels: the exchange's shape and this rank's side of it.
+/// `constant PairRows&` at buffer 1: `width` then the frame row `stride`; argmax and pick take their own words.
 const PairRows = extern struct {
     width: u32,
     stride: u32,
@@ -154,17 +158,24 @@ pub const Pair = struct {
     rig: rig_.Rig,
     which: Which,
     pipe: mtl.Pipeline,
-    /// The hooks this probe exposes: the raw kernels check their own rule, the two float ones use the reference.
+    /// The hooks this probe exposes: the raw kernels check their own rule, the three computing ones use the reference.
     v: g.VTable,
     shape: c.Shape = .{ .rows = 0, .n = 0, .k = 0 },
     rows: usize = 0,
     width: usize = 0,
+    /// The rank this prepare writes first: the gather's `mine` half is its payload.
+    rank: u32 = 0,
+    /// The row stride in PairRows, in bf16 elements: the stage's source frame row, the gather's destination row.
+    stride: usize = 0,
 
     // Host inputs of the last prepare, as the reference and the check read them (freed by `drop`).
-    xh: ?[]f32 = null, // add_rms/sum: this rank's part
-    ph: ?[]f32 = null, // add_rms/sum: the peer's part
+    xh: ?[]f32 = null, // add_rms: this rank's part
+    ph: ?[]f32 = null, // add_rms: the peer's part
     wh: ?[]u16 = null, // add_rms: the RMS weights, bf16
     hh: ?[]f32 = null, // add_rms: h before the launch (the kernel folds into it in place)
+    sh: ?[]u16 = null, // stage: the src payload, bf16
+    mh: ?[]u16 = null, // gather: this rank's half (mine), bf16
+    nh: ?[]u16 = null, // gather: the peer's half (recv), bf16
     kh: ?[]u16 = null, // argmax: the bf16 logits
     pw: ?[]u32 = null, // pick: this rank's (value bits, id) words
     qw: ?[]u32 = null, // pick: the peer's words
@@ -190,6 +201,7 @@ pub const Pair = struct {
         }
         var v = g.hooks(Pair);
         if (which != .argmax and which != .pick) v.check = null;
+        if (which != .stage and which != .gather) v.bounds = null;
         return .{ .a = a, .rig = .{ .a = a, .device = device, .queue = queue }, .which = which, .pipe = pipe, .v = v };
     }
 
@@ -208,6 +220,9 @@ pub const Pair = struct {
         if (self.ph) |s| self.a.free(s);
         if (self.wh) |s| self.a.free(s);
         if (self.hh) |s| self.a.free(s);
+        if (self.sh) |s| self.a.free(s);
+        if (self.mh) |s| self.a.free(s);
+        if (self.nh) |s| self.a.free(s);
         if (self.kh) |s| self.a.free(s);
         if (self.pw) |s| self.a.free(s);
         if (self.qw) |s| self.a.free(s);
@@ -215,6 +230,9 @@ pub const Pair = struct {
         self.ph = null;
         self.wh = null;
         self.hh = null;
+        self.sh = null;
+        self.mh = null;
+        self.nh = null;
         self.kh = null;
         self.pw = null;
         self.qw = null;
@@ -228,6 +246,22 @@ pub const Pair = struct {
     /// f32 values as bf16, for the buffers whose datum is a bf16 frame.
     fn framed(rng: std.Random) f32 {
         return c.fromBf16(c.toBf16(ordinary(rng)));
+    }
+
+    /// A bf16 payload: what the two moves carry, with gate 1's non-finite plants where the reference looks for them.
+    fn payload(self: *Pair, len: usize, fill: g.Fill, rng: std.Random) ![]u16 {
+        const s = try self.a.alloc(u16, len);
+        for (s) |*v| v.* = c.toBf16(ordinary(rng));
+        if (fill == .nonfinite) {
+            const nan = c.toBf16(std.math.nan(f32));
+            const inf = c.toBf16(std.math.inf(f32));
+            const ninf = c.toBf16(-std.math.inf(f32));
+            for ([_]u16{ nan, inf, ninf, nan, ninf }, 0..) |plant, p| {
+                const at = (p + 1) * (len / 8 + 1) + p * 3;
+                if (at < len) s[at] = plant;
+            }
+        }
+        return s;
     }
 
     /// An input the seam would give: this rank's words, the peer's words, or the weights.
@@ -253,29 +287,46 @@ pub const Pair = struct {
         var prng = std.Random.DefaultPrng.init(seed);
         const rng = prng.random();
         switch (self.which) {
-            .add_rms, .sum => {
+            .add_rms => {
                 if (shape.n != shape.k or shape.k == 0 or shape.k > 32768 or shape.k % 256 != 0) return false;
                 const n = shape.rows * shape.k;
-                const bf16 = self.which == .sum;
-                self.xh = try self.part(n, bf16, fill, rng);
-                self.ph = try self.part(n, bf16, fill, rng);
+                self.xh = try self.part(n, false, fill, rng);
+                self.ph = try self.part(n, false, fill, rng);
                 self.mine = try self.rig.input(std.mem.sliceAsBytes(self.xh.?));
                 self.peer = try self.rig.input(std.mem.sliceAsBytes(self.ph.?));
-                if (self.which == .add_rms) {
-                    const w = try self.a.alloc(u16, shape.k);
-                    self.wh = w;
-                    for (w) |*v| v.* = c.toBf16(0.5 + rng.float(f32));
-                    const h = try self.a.alloc(f32, n);
-                    self.hh = h;
-                    for (h) |*v| v.* = ordinary(rng);
-                    self.sync = try self.rig.scratch(128);
-                    self.w = try self.rig.input(std.mem.sliceAsBytes(w));
-                    self.h = try self.rig.output(n * 4);
-                    self.y = try self.rig.output(n * 4);
-                    @memcpy(self.rig.bytes(self.h, n * 4), std.mem.sliceAsBytes(h));
-                } else {
-                    self.sync = try self.rig.scratch(128);
+                const w = try self.a.alloc(u16, shape.k);
+                self.wh = w;
+                for (w) |*v| v.* = c.toBf16(0.5 + rng.float(f32));
+                const h = try self.a.alloc(f32, n);
+                self.hh = h;
+                for (h) |*v| v.* = ordinary(rng);
+                self.sync = try self.rig.scratch(128);
+                self.w = try self.rig.input(std.mem.sliceAsBytes(w));
+                self.h = try self.rig.output(n * 4);
+                self.y = try self.rig.output(n * 4);
+                @memcpy(self.rig.bytes(self.h, n * 4), std.mem.sliceAsBytes(h));
+            },
+            .stage, .gather => {
+                if (shape.rows == 0 or shape.k == 0 or shape.k > 32768 or shape.k % 256 != 0) return false;
+                const n = shape.rows * shape.k;
+                // The gather writes this rank's half first; alternating the rank with the seed covers both orders.
+                self.rank = @intCast(seed & 1);
+                const mine = try self.payload(n, fill, rng);
+                self.sync = try self.rig.scratch(128);
+                if (self.which == .stage) {
+                    self.stride = shape.k;
+                    self.sh = mine;
+                    self.mine = try self.rig.input(std.mem.sliceAsBytes(mine));
                     self.out = try self.rig.output(n * 2);
+                } else {
+                    // A frame row holds both halves, so its stride is at least 2*width; a wider `n` is seam A's field.
+                    self.stride = if (shape.n > 2 * shape.k) shape.n else 2 * shape.k;
+                    self.mh = mine;
+                    const peer = try self.payload(n, fill, rng);
+                    self.nh = peer;
+                    self.mine = try self.rig.input(std.mem.sliceAsBytes(mine));
+                    self.peer = try self.rig.input(std.mem.sliceAsBytes(peer));
+                    self.out = try self.rig.output(2 * ((shape.rows - 1) * self.stride + 2 * shape.k));
                 }
             },
             .argmax => {
@@ -363,11 +414,22 @@ pub const Pair = struct {
                 e.setBuffer(self.y.buf, self.y.off, 6);
                 e.dispatchGroups(groups, threads);
             },
-            .sum => {
+            .stage => {
                 @memset(self.rig.bytes(self.sync, 128), 0);
                 e.setPipeline(self.pipe);
                 e.setBuffer(self.sync.buf, self.sync.off, 0);
-                e.setValue(rowsArgs(self.width, self.width, 0, 1, 0), 1);
+                e.setValue(rowsArgs(self.width, self.stride, self.rank, 1, 0), 1);
+                e.setBuffer(self.mine.buf, self.mine.off, 2);
+                e.setBuffer(self.out.buf, self.out.off, 3);
+                e.dispatchGroups(groups, threads);
+            },
+            .gather => {
+                @memset(self.rig.bytes(self.sync, 128), 0);
+                const frame = self.rig.bytes(self.out, 2 * self.count());
+                @memset(frame, 0); // the frame's gaps: no launch writes them, so their planted value is zero
+                e.setPipeline(self.pipe);
+                e.setBuffer(self.sync.buf, self.sync.off, 0);
+                e.setValue(rowsArgs(self.width, self.stride, self.rank, 1, 0), 1);
                 e.setBuffer(self.mine.buf, self.mine.off, 2);
                 e.setBuffer(self.peer.buf, self.peer.off, 3);
                 e.setBuffer(self.out.buf, self.out.off, 4);
@@ -395,24 +457,25 @@ pub const Pair = struct {
         try self.rig.finish(p);
     }
 
-    /// Output elements of the prepared call: the two float kernels' values, the two raw kernels' bytes.
+    /// Output elements of the prepared call: bf16 elements for the three frames, the two raw kernels' bytes.
     pub fn count(self: *Pair) usize {
         return switch (self.which) {
             .add_rms => 2 * self.rows * self.width,
-            .sum => self.rows * self.width,
+            .stage => self.rows * self.width,
+            .gather => (self.rows - 1) * self.stride + 2 * self.width,
             .argmax => self.rows * 8,
             .pick => self.rows * 4,
         };
     }
 
-    /// Float64 outputs of the prepared inputs and each one's sums' term magnitude.
+    /// Float64 outputs of the prepared inputs and each one's sums' term magnitude (a move's term is the value itself).
     pub fn reference(self: *Pair, want: []f64, mag: []f64) !void {
         const width = self.width;
         const total = self.rows * width;
-        const xh = self.xh orelse return error.NoReference;
-        const ph = self.ph orelse return error.NoReference;
         switch (self.which) {
             .add_rms => {
+                const xh = self.xh orelse return error.NoReference;
+                const ph = self.ph orelse return error.NoReference;
                 const hh = self.hh orelse return error.NoReference;
                 const wh = self.wh orelse return error.NoReference;
                 for (0..self.rows) |r| {
@@ -434,15 +497,37 @@ pub const Pair = struct {
                     }
                 }
             },
-            .sum => {
+            .stage => {
+                const sh = self.sh orelse return error.NoReference;
                 for (want, mag, 0..) |*w, *m, i| {
-                    const s = xh[i] + ph[i];
-                    w.* = c.fromBf16(c.toBf16(s));
-                    m.* = @abs(xh[i]) + @abs(ph[i]);
+                    const v = c.fromBf16(sh[i]);
+                    w.* = v;
+                    m.* = @abs(v);
                 }
+            },
+            .gather => {
+                const mh = self.mh orelse return error.NoReference;
+                const nh = self.nh orelse return error.NoReference;
+                @memset(want, 0); // the frame's gaps: no launch writes them, so their reference value is zero
+                for (0..self.rows) |row| {
+                    const at = row * self.stride;
+                    for (0..width) |i| {
+                        want[at + i] = c.fromBf16(if (self.rank == 0) mh[row * width + i] else nh[row * width + i]);
+                        want[at + width + i] = c.fromBf16(if (self.rank == 0) nh[row * width + i] else mh[row * width + i]);
+                    }
+                }
+                for (want, mag) |w, *m| m.* = @abs(w);
             },
             else => return error.NoReference,
         }
+    }
+
+    /// The moves are exact: every output element must equal the reference's bf16 bit for bit.
+    pub fn bounds(self: *Pair, want: []const f64, mag: []const f64, allow: []f64) !void {
+        _ = want;
+        _ = mag;
+        if (self.which != .stage and self.which != .gather) return error.NotMove;
+        for (allow) |*l| l.* = 0;
     }
 
     /// The outputs if every sum ran in `acc` in an order, the rest of the arithmetic exact (gate 4).

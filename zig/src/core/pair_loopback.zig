@@ -13,12 +13,12 @@ const PairRows = pair_layout.PairRows;
 const Seam = pair_layout.Seam;
 const elems_per_word = pair_layout.elems_per_word;
 const pages = pair_layout.pages;
-const partBytes = pair_layout.partBytes;
+const stageBytes = pair_layout.stageBytes;
 const pickBytes = pair_layout.pickBytes;
 const seam = pair_layout.seam;
 const seam_failed = pair_layout.seam_failed;
 const seedValue = pair_layout.seedValue;
-const writeElem = pair_layout.writeElem;
+const writeHalf = pair_layout.writeHalf;
 const Ref = pair_layout.Ref;
 
 /// The same seam with a host copy instead of the link: the numeric reference; bytes arrive via `arrive`/`seed`.
@@ -28,13 +28,14 @@ pub const Loopback = struct {
     l: Layout,
     win: []u8,
     wbuf: mtl.Buffer,
-    pipe: mtl.Pipeline,
+    stage_pipe: mtl.Pipeline,
+    gather_pipe: mtl.Pipeline,
     argmax_pipe: mtl.Pipeline,
     pick_pipe: mtl.Pipeline,
-    /// Per-exchange part bytes (sum and argmax queue different sizes): the relay copies exactly this much.
+    /// Per-exchange part bytes (stage/gather and argmax queue different sizes): the relay copies exactly this much.
     bytes: []u32,
     fence: Fence,
-    /// This rank's parts: the GPU signals it per exchange, and the relay reads `sendBytes(x)` after that.
+    /// This rank's parts: the GPU signals it per exchange, and the relay reads `bytesFor(x)` after that.
     posted: mtl.SharedEvent,
     /// The peer's parts: the relay sets it once the copy has landed, and the seam waits for it.
     landed: mtl.SharedEvent,
@@ -59,8 +60,10 @@ pub const Loopback = struct {
         errdefer posted.deinit();
         const landed = try device.sharedEvent();
         errdefer landed.deinit();
-        const pipe = try mtl.Pipeline.init(device, lib, "pair_sum", false);
-        errdefer pipe.deinit();
+        const stage_pipe = try mtl.Pipeline.init(device, lib, "pair_stage", false);
+        errdefer stage_pipe.deinit();
+        const gather_pipe = try mtl.Pipeline.init(device, lib, "pair_gather", false);
+        errdefer gather_pipe.deinit();
         const argmax_pipe = try mtl.Pipeline.init(device, lib, "pair_argmax", false);
         errdefer argmax_pipe.deinit();
         const pick_pipe = try mtl.Pipeline.init(device, lib, "pair_pick", false);
@@ -68,12 +71,13 @@ pub const Loopback = struct {
         const sizes = try std.heap.page_allocator.alloc(u32, JOBS);
         errdefer std.heap.page_allocator.free(sizes);
         @memset(sizes, 0);
-        return .{ .allocator = std.heap.page_allocator, .rank = rank, .l = l, .win = win, .wbuf = wbuf, .pipe = pipe, .argmax_pipe = argmax_pipe, .pick_pipe = pick_pipe, .bytes = sizes, .fence = fence, .posted = posted, .landed = landed };
+        return .{ .allocator = std.heap.page_allocator, .rank = rank, .l = l, .win = win, .wbuf = wbuf, .stage_pipe = stage_pipe, .gather_pipe = gather_pipe, .argmax_pipe = argmax_pipe, .pick_pipe = pick_pipe, .bytes = sizes, .fence = fence, .posted = posted, .landed = landed };
     }
 
     pub fn deinit(p: *Loopback) void {
         p.stopRelay();
-        p.pipe.deinit();
+        p.stage_pipe.deinit();
+        p.gather_pipe.deinit();
         p.argmax_pipe.deinit();
         p.pick_pipe.deinit();
         p.allocator.free(p.bytes);
@@ -98,15 +102,7 @@ pub const Loopback = struct {
         return p.l.recv(x);
     }
 
-    pub fn sendBytes(p: *const Loopback, x: u32, rows: u32, width: u32) []const u8 {
-        return p.win[p.l.send(x)..][0..partBytes(rows, width)];
-    }
-
-    pub fn recvBytes(p: *Loopback, x: u32, rows: u32, width: u32) []u8 {
-        return p.win[p.l.recv(x)..][0..partBytes(rows, width)];
-    }
-
-    /// Where the producer writes this rank's `Elem` partial for the next exchange; the same shape as `Pair.part`.
+    /// Where the producer writes this rank's bf16 columns of the next exchange; the same shape as `Pair.part`.
     pub fn nextX(p: *const Loopback) u32 {
         return @truncate(p.x + 1);
     }
@@ -118,14 +114,15 @@ pub const Loopback = struct {
 
     /// Fill both slots with the seed and mark all arrived: arithmetic check only, timing must not use this.
     pub fn seed(p: *Loopback, rows: u32, width: u32) void {
-        const bytes = partBytes(rows, width);
+        const bytes = stageBytes(rows, width);
+        if (bytes > p.l.slot) @panic("loopback: the seeded part does not fit the window's slot");
         for (0..2) |x| {
             const recv = p.win[p.l.recv(@intCast(x))..][0..bytes];
             const send = p.win[p.l.send(@intCast(x))..][0..bytes];
             for (0..rows) |r| for (0..width) |i| {
                 const at = r * width + i;
-                writeElem(recv, at, seedValue(@intCast(r), @intCast(i), 0x15));
-                writeElem(send, at, seedValue(@intCast(r), @intCast(i), 0x0A));
+                writeHalf(recv, at, seedValue(@intCast(r), @intCast(i), 0x15));
+                writeHalf(send, at, seedValue(@intCast(r), @intCast(i), 0x0A));
             };
         }
         p.satisfy();
@@ -161,7 +158,7 @@ pub const Loopback = struct {
         }
     }
 
-    /// The part's bytes for exchange `x` as the last `sum`/`argmax` queued it (the relay's copy length).
+    /// The part's bytes for exchange `x` as the last `gather`/`argmax` queued it (the relay's copy length).
     pub fn bytesFor(p: *const Loopback, x: u32) u32 {
         return @atomicLoad(u32, &p.bytes[x % JOBS], .acquire);
     }
@@ -173,18 +170,31 @@ pub const Loopback = struct {
         p.landed.set(x);
     }
 
-    /// The seam `Pair.sum` encodes: the same kernel, both parts in this window.
-    pub fn sum(p: *Loopback, e: *mtl.ComputeEncoder, x: u32, mine: Ref, out: Ref, rows: u32, width: u32) void {
-        if (rows == 0 or width == 0 or width % elems_per_word != 0) @panic("loopback: sum() wants rows > 0 and a width that fills whole window words");
-        if (x != @as(u32, @truncate(p.x + 1))) @panic("loopback: an exchange was encoded out of order (part() not called first)");
-        if (mine.buf.id != p.wbuf.id or mine.off != p.l.send(x)) @panic("loopback: sum()'s part is not the region part() returned");
-        if (partBytes(rows, width) > p.l.slot) @panic("loopback: this exchange's part does not fit the window's slot");
-        p.x += 1;
-        @atomicStore(u32, &p.bytes[x % JOBS], @intCast(partBytes(rows, width)), .release);
-        seam(e, p.fence, p.posted, p.landed, x);
-        e.setPipeline(p.pipe);
+    /// The seam `Pair.stage` encodes (before its `gather`): this rank's `width` columns of the frame row into the slot.
+    pub fn stage(p: *Loopback, e: *mtl.ComputeEncoder, x: u32, src: Ref, rows: u32, width: u32, stride: u32) void {
+        if (rows == 0 or width == 0 or width > stride) @panic("loopback: stage() wants rows > 0 and a width inside the source row");
+        if (stageBytes(rows, width) > p.l.slot) @panic("loopback: this exchange's part does not fit the window's slot");
+        e.setPipeline(p.stage_pipe);
         e.setBuffer(p.wbuf, p.l.sync(), 0);
-        e.setValue(PairRows{ .width = width, .stride = width, .rank = p.rank, .x = x, .eps = 0 }, 1);
+        e.setValue(PairRows{ .width = width, .stride = stride, .rank = p.rank, .x = x, .eps = 0 }, 1);
+        e.setBuffer(src.buf, src.off, 2);
+        e.setBuffer(p.wbuf, p.l.send(x), 3);
+        e.dispatchGroups(.{ .width = rows }, .{ .width = 256 });
+    }
+
+    /// The seam `Pair.gather` encodes: the relay, then the frame row as this rank's half and the peer's, both bf16.
+    pub fn gather(p: *Loopback, e: *mtl.ComputeEncoder, x: u32, mine: Ref, out: Ref, rows: u32, width: u32, out_stride: u32) void {
+        if (rows == 0 or width == 0 or width % elems_per_word != 0) @panic("loopback: gather() wants rows > 0 and a width that fills whole window words");
+        if (out_stride < 2 * width) @panic("loopback: gather()'s frame row is narrower than both halves");
+        if (x != @as(u32, @truncate(p.x + 1))) @panic("loopback: an exchange was encoded out of order (part() not called first)");
+        if (mine.buf.id != p.wbuf.id or mine.off != p.l.send(x)) @panic("loopback: gather()'s part is not the region part() returned");
+        if (stageBytes(rows, width) > p.l.slot) @panic("loopback: this exchange's part does not fit the window's slot");
+        p.x += 1;
+        @atomicStore(u32, &p.bytes[x % JOBS], @intCast(stageBytes(rows, width)), .release);
+        seam(e, p.fence, p.posted, p.landed, x);
+        e.setPipeline(p.gather_pipe);
+        e.setBuffer(p.wbuf, p.l.sync(), 0);
+        e.setValue(PairRows{ .width = width, .stride = out_stride, .rank = p.rank, .x = x, .eps = 0 }, 1);
         e.setBuffer(mine.buf, mine.off, 2);
         e.setBuffer(p.wbuf, p.l.recv(x), 3);
         e.setBuffer(out.buf, out.off, 4);

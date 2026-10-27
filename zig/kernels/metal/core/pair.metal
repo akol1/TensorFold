@@ -23,42 +23,12 @@ struct PairRows {
   float eps, pad0, pad1, pad2;
 };
 
-// SEAM_ELEM_BF16: 0 = fp32 payload (shipping), 1 = bf16; producer must match. Rationale: docs/speed-up-mode.md
-#define SEAM_ELEM_BF16 0
-
-// bf16 bits as the exact fp32 value they name, and fp32 as bf16 bits rounded to nearest even (one rounding).
+// bf16 bits as the exact fp32 value they name (argmax reads a bf16 logits stream this way).
 inline float pair_bf16(uint bits) {
   return as_type<float>(bits << 16);
 }
-inline ushort pair_bf16_bits(float f) {
-  const uint u = as_type<uint>(f);
-  return ushort((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
-}
 
-// One payload element of this rank's part (`mine` or `out`), indexed by element, whichever type the payload holds.
-inline float seam_get(const device ushort* p, ulong i) {
-#if SEAM_ELEM_BF16
-  return pair_bf16(uint(p[i]));
-#else
-  return reinterpret_cast<const device float*>(p)[i];
-#endif
-}
-// Frame, not payload: pair_sum's out is bf16 under either payload, so an f32 payload buys an exact half-sum only.
-inline void frame_put(device ushort* p, ulong i, float v) {
-  p[i] = pair_bf16_bits(v);
-}
-
-// The peer's element i: atomic word load; bf16 packs two a word (an even width keeps rows whole), fp32 is one a word.
-inline float seam_peer(const device atomic_uint* words, ulong i) {
-#if SEAM_ELEM_BF16
-  const uint w = atomic_load_explicit(&words[i >> 1], memory_order_relaxed);
-  return pair_bf16(w >> ((i & 1) * 16));
-#else
-  return as_type<float>(atomic_load_explicit(&words[i], memory_order_relaxed));
-#endif
-}
-
-// Row r: h += rank 0's part + rank 1's part, then y = w * (h / rms(h)); payload is fp32 (streamBytes), not SEAM_ELEM.
+// Row r: h += rank 0's part + rank 1's part, then y = w * (h / rms(h)); payload is fp32 (streamBytes).
 kernel void pair_add_rms(device atomic_uint* sync [[buffer(0)]], constant PairRows& a [[buffer(1)]],
                          const device float* mine [[buffer(2)]], device atomic_uint* peer [[buffer(3)]],
                          device float* h [[buffer(4)]], const device bfloat* w [[buffer(5)]],
@@ -89,21 +59,40 @@ kernel void pair_add_rms(device atomic_uint* sync [[buffer(0)]], constant PairRo
   for (uint i = t; i < a.width; i += 256) y[ulong(r) * a.stride + i] = float(w[i]) * (x[i] * rs);
 }
 
-// Row r: out = frame(float(mine) + float(peer)), one rounding; payload is a.width, frame a.stride, equal here.
-kernel void pair_sum(device atomic_uint* sync [[buffer(0)]], constant PairRows& a [[buffer(1)]],
-                     const device ushort* mine [[buffer(2)]], device atomic_uint* peer [[buffer(3)]],
-                     device ushort* out [[buffer(4)]], uint r [[threadgroup_position_in_grid]],
-                     uint t [[thread_index_in_threadgroup]]) {
+// Row r: this rank's own half of the frame row into the exchange slot; a bf16 copy, so it carries the frame's bits.
+kernel void pair_stage(device atomic_uint* sync [[buffer(0)]], constant PairRows& a [[buffer(1)]],
+                       const device ushort* src [[buffer(2)]], device ushort* dst [[buffer(3)]],
+                       uint r [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]]) {
+  const ulong in = ulong(r) * a.stride;
+  const ulong out = ulong(r) * a.width;
+  if (pair_link_broken(sync, t)) {
+    for (uint i = t; i < a.width; i += 256) dst[out + i] = 0x7FC0u; // bf16 NaN: the link stays down
+    return;
+  }
+  for (uint i = t; i < a.width; i += 256) dst[out + i] = src[in + i];
+}
+
+// Row r: this rank's half at its own offset in the frame row and the peer's at the other; a bf16 copy, no arithmetic.
+kernel void pair_gather(device atomic_uint* sync [[buffer(0)]], constant PairRows& a [[buffer(1)]],
+                        const device ushort* mine [[buffer(2)]], device atomic_uint* peer [[buffer(3)]],
+                        device ushort* out [[buffer(4)]], uint r [[threadgroup_position_in_grid]],
+                        uint t [[thread_index_in_threadgroup]]) {
   const ulong mrow = ulong(r) * a.width;
   const ulong orow = ulong(r) * a.stride;
+  const ulong own = a.rank == 0 ? orow : orow + a.width;
+  const ulong got = a.rank == 0 ? orow + a.width : orow;
   if (pair_link_broken(sync, t)) {
-    for (uint i = t; i < a.width; i += 256) frame_put(out, orow + i, NAN);
+    for (uint i = t; i < a.width; i += 256) {
+      out[own + i] = 0x7FC0u;
+      out[got + i] = 0x7FC0u;
+    }
     return;
   }
   for (uint i = t; i < a.width; i += 256) {
-    const float m = seam_get(mine, mrow + i);
-    const float p = seam_peer(peer, mrow + i);
-    frame_put(out, orow + i, a.rank == 0 ? m + p : p + m);
+    // The relay wrote the peer's half: an untracked frame read, so one atomic word (two bf16) at a time.
+    const uint word = atomic_load_explicit(&peer[(mrow + i) >> 1], memory_order_relaxed);
+    out[own + i] = mine[mrow + i];
+    out[got + i] = ushort(word >> ((i & 1) * 16));
   }
 }
 

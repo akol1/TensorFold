@@ -54,7 +54,7 @@ pub const Link = struct {
 
 /// The pair's seam ends in the engine's shape: the transport's `Ref` is the frame's, so the casts are field copies.
 pub fn pairReduce(p: *Pair) q.forward.Reduce {
-    return .{ .ptr = p, .part = pairPart, .sum = pairSum, .failed = pairFailed, .argmax = pairArgmax };
+    return .{ .ptr = p, .part = pairPart, .stage = pairStage, .gather = pairGather, .failed = pairFailed, .argmax = pairArgmax };
 }
 
 fn pairPart(ptr: *anyopaque) q.forward.Seam {
@@ -63,9 +63,14 @@ fn pairPart(ptr: *anyopaque) q.forward.Seam {
     return .{ .x = s.x, .ref = .{ .buffer = s.ref.buf, .offset = s.ref.off } };
 }
 
-fn pairSum(ptr: *anyopaque, e: *mtl.ComputeEncoder, x: u32, mine: q.forward.Ref, out: q.forward.Ref, rows: u32, width: u32) void {
+fn pairStage(ptr: *anyopaque, e: *mtl.ComputeEncoder, x: u32, src: q.forward.Ref, rows: u32, width: u32, stride: u32) void {
     const p: *Pair = @ptrCast(@alignCast(ptr));
-    p.sum(e, x, .{ .buf = mine.buffer, .off = mine.offset }, .{ .buf = out.buffer, .off = out.offset }, rows, width);
+    p.stage(e, x, .{ .buf = src.buffer, .off = src.offset }, rows, width, stride);
+}
+
+fn pairGather(ptr: *anyopaque, e: *mtl.ComputeEncoder, x: u32, mine: q.forward.Ref, out: q.forward.Ref, rows: u32, width: u32, out_stride: u32) void {
+    const p: *Pair = @ptrCast(@alignCast(ptr));
+    p.gather(e, x, .{ .buf = mine.buffer, .off = mine.offset }, .{ .buf = out.buffer, .off = out.offset }, rows, width, out_stride);
 }
 
 fn pairFailed(ptr: *anyopaque) bool {
@@ -78,9 +83,9 @@ fn pairArgmax(ptr: *anyopaque, e: *mtl.ComputeEncoder, x: u32, logits: q.forward
     p.argmaxBf16(e, x, .{ .buf = logits.buffer, .off = logits.offset }, stride, lo, n, rows, .{ .buf = picks.buffer, .off = picks.offset });
 }
 
-/// The window one pair exchange may carry: a round's rows of the residual frame, with the width the seam sums.
+/// The window an exchange may carry: a round's rows of the widest seam payload -- this rank's `intermediate / 2` bf16.
 pub fn pairBytes() usize {
-    return @as(usize, batch_rows) * 6144 * @sizeOf(f32);
+    return @as(usize, batch_rows) * @divExact(17408, 2) * @sizeOf(u16);
 }
 
 /// A shared round's rows at most: the frame's.

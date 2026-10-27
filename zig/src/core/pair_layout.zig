@@ -63,7 +63,7 @@ pub const seam_failed: u64 = std.math.maxInt(u64);
 
 pub const Seam = struct { x: u32, ref: Ref };
 
-/// `Elem` is f32 (flip with pair.metal's SEAM_ELEM_BF16): bf16 double-rounds a seam, the 27B gate diverged at token 16.
+/// `Elem` is f32: the fp32 stream (`addRms`) sums exactly; `stage`/`gather` copy bf16 halves, never arithmetic.
 pub const Elem = f32;
 /// One element's bytes; a payload size in this file is `rows * width * elem_bytes`, never a literal.
 pub const elem_bytes: usize = @sizeOf(Elem);
@@ -81,6 +81,16 @@ pub fn partBytes(rows: u32, width: u32) usize {
     return @as(usize, rows) * width * elem_bytes;
 }
 
+/// `stage`'s outgoing copy: this rank's `cols` of `rows` rows, bf16 -- the frame seam's payload, not an `Elem` payload.
+pub fn stageBytes(rows: u32, cols: u32) usize {
+    return @as(usize, rows) * cols * @sizeOf(u16);
+}
+
+/// `gather`'s `out`: both halves of `rows` rows packed into the frame, so the frame row is `2 * cols` wide.
+pub fn gatherBytes(rows: u32, cols: u32) usize {
+    return @as(usize, rows) * 2 * cols * @sizeOf(u16);
+}
+
 /// The head seam's exchange: an (fp32 value, u32 id) a row under either element; pair_pick compares logits, not words.
 pub fn pickBytes(rows: u32) usize {
     return @as(usize, rows) * @sizeOf(f32) * 2;
@@ -91,17 +101,17 @@ pub fn streamBytes(rows: u32, width: u32) usize {
     return @as(usize, rows) * width * @sizeOf(f32);
 }
 
-/// `sum`'s `out`: the bf16 frame, unchanged by the flip; an f32 payload reproduces one Mac's bf16(full) (~1e-7).
+/// A frame tensor's bytes: the bf16 grid `stage` reads and `gather` writes its halves into.
 pub fn frameBytes(rows: u32, width: u32) usize {
     return @as(usize, rows) * width * @sizeOf(u16);
 }
 
-/// One fp32 value as the frame stores it (bf16, nearest even), the host half of `pair.metal`'s `frame_put`.
+/// One fp32 value as the frame stores it (bf16, nearest even), the host side of the kernels' frame elements.
 pub fn toFrame(v: f32) u16 {
     return bf16Bits(v);
 }
 
-/// An element's fp32 value. The payload's arithmetic is fp32 on both Macs, so this is where a `sum` operand enters it.
+/// An element's fp32 value: the payload's arithmetic is fp32 on both Macs, so a payload operand enters here.
 pub fn fromElem(v: Elem) f32 {
     return switch (Elem) {
         u16 => @bitCast(@as(u32, v) << 16),
@@ -119,13 +129,13 @@ pub fn toElem(v: f32) Elem {
     };
 }
 
-/// One rounding to bf16, nearest-even: the arithmetic `pair.metal`'s `pair_bf16_bits` does in the kernel.
+/// One rounding to bf16, nearest-even: the host side of a frame element (pair.metal copies the bits it is given).
 fn bf16Bits(v: f32) u16 {
     const u: u32 = @bitCast(v);
     return @truncate((u +% 0x7FFF +% ((u >> 16) & 1)) >> 16);
 }
 
-/// The seed pattern as a payload element: 1 + m/128, exact in bf16 and f32, so the flip keeps expected bytes.
+/// The seed pattern as a payload element: 1 + m/128, exact in bf16 and f32, so expected bytes hold either way.
 pub fn seedValue(r: u32, i: u32, salt: u16) Elem {
     const k = r *% 5120 +% i *% 37;
     const m: u32 = (salt & 0x1F) + ((k *% 53) & 0x1F);
@@ -136,7 +146,12 @@ pub fn writeElem(out: []u8, at: usize, v: Elem) void {
     @memcpy(out[at * elem_bytes ..][0..elem_bytes], std.mem.asBytes(&v));
 }
 
-/// The kernels' argument block: no field is `Elem`, so its layout and pair.metal's struct do not move on the flip.
+/// One frame element at `at` of a bf16 payload: `stage`'s and `gather`'s slot is the frame's bits, two bytes each.
+pub fn writeHalf(out: []u8, at: usize, v: f32) void {
+    std.mem.writeInt(u16, out[at * @sizeOf(u16) ..][0..@sizeOf(u16)], toFrame(v), .little);
+}
+
+/// The kernels' argument block: no field is `Elem`, so its layout and pair.metal's struct do not move with `Elem`.
 pub const PairRows = extern struct { width: u32, stride: u32, rank: u32, x: u32, eps: f32, pad0: f32 = 0, pad1: f32 = 0, pad2: f32 = 0 };
 
 /// Between encoders only (core/segments.zig:59-66): fence, close, posted, wait, reopen, wait -- a real hand-off.

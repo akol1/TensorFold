@@ -381,8 +381,14 @@ pub const Metal = struct {
 
     // -- the vtable ---------------------------------------------------------------------------------------------
 
+    /// Rank 1 replays rank 0's rounds: refuse at the head of `prefill`, its first backend call (GLM's `beginPrompt`).
+    pub fn refuseFollower(m: *Metal) !void {
+        if (m.link) |l| if (l.pair.rank != 0) return error.FollowsPeer;
+    }
+
     fn prefillFn(ptr: *anyopaque, s: *lanes.Stream) anyerror!void {
         const b = self(ptr);
+        try refuseFollower(b); // before settle, dropRound, promoteDue and bind: rank 1 touched nothing yet
         b.settle() catch {};
         b.dropRound();
         slots.promoteDue(b);

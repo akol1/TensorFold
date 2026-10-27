@@ -119,6 +119,8 @@ fn readMemory(_: ?*anyopaque, reset_peak: bool) ?api.Memory {
 fn words(_: ?*anyopaque, err: anyerror) ?[]const u8 {
     return switch (err) {
         error.PromptTooLong => "the prompt and max_tokens do not fit this server's --context",
+        // rank 1 replays rank 0's rounds and owns no request (qwen27_lanes.prefillFn refuses first)
+        error.FollowsPeer => "speed-up mode: this Mac runs rank 0's requests; send requests to rank 0",
         else => null,
     };
 }
@@ -435,9 +437,10 @@ pub fn attach(gpa: Allocator, io: std.Io, model: *q.model.Model, drafter: ?*q.df
     };
     // a dead link is not a serving state: exit so a supervisor restarts both ranks, not serve seam errors
     if (pair) |p| {
-        h.watcher = std.Thread.spawn(.{}, link.watch, .{ p, &h.quit }) catch |err| blk: {
-            std.log.warn("qwen27: no link watchdog ({s}): a dead peer leaves this rank up", .{@errorName(err)});
-            break :blk null;
+        // fail closed: a rank whose watchdog is missing would keep serving HTTP on a half once the peer died
+        h.watcher = std.Thread.spawn(.{}, link.watch, .{ p, &h.quit }) catch |err| {
+            why.* = try std.fmt.allocPrint(a, "the pair link's watchdog would not start ({s}): a dead peer would leave this rank up, so this rank stops", .{@errorName(err)});
+            return error.PairNoWatchdog;
         };
     }
     try h.host.start();
@@ -464,6 +467,10 @@ fn pairFlags(o: Options, drafter: bool, why: *[]const u8) !void {
     if (o.learn != null) {
         why.* = "--learn does not run on a pair: each Mac learns its own halves of the slots' states";
         return error.PairNoLearn;
+    }
+    if (o.vision != null or o.images != null) {
+        why.* = "--vision does not run on a pair: rank 1 replays rank 0's token ids, so an image prompt would run different rows on the two ranks";
+        return error.PairNoVision;
     }
 }
 
@@ -551,4 +558,27 @@ test "Qwen27 interior state uses a guaranteed cold request cut" {
     const followup = try store.beginUser(a, tokens, @intCast(tokens.len - 8), 16, @intCast(tokens.len - 8), &.{}, starts.items, null, &.{});
     try std.testing.expectEqual(@as(u32, 129024), followup.from);
     try std.testing.expect(store.held <= store.budget);
+}
+
+test "rank 1 refuses a request by name before its backend moves round state" {
+    try std.testing.expectEqualStrings("speed-up mode: this Mac runs rank 0's requests; send requests to rank 0", words(null, error.FollowsPeer).?);
+    // `link` is the only `Metal` field the guard reads: the rest staying undefined proves no other step ran
+    var pair: lb.Pair = undefined;
+    pair.rank = 1;
+    var l: lb.Link = undefined;
+    l.pair = &pair;
+    var m: lb.Metal = undefined;
+    m.link = &l;
+    try std.testing.expectError(error.FollowsPeer, lb.Metal.refuseFollower(&m));
+    pair.rank = 0;
+    try lb.Metal.refuseFollower(&m); // rank 0's own requests run on it
+    m.link = null;
+    try lb.Metal.refuseFollower(&m); // no pair: nothing to refuse for
+}
+
+test "--vision is refused on a pair, by name" {
+    var why: []const u8 = "";
+    try std.testing.expectError(error.PairNoVision, pairFlags(.{ .context = 4096, .streams = 1, .vision = .{} }, false, &why));
+    try std.testing.expect(std.mem.startsWith(u8, why, "--vision does not run on a pair"));
+    try pairFlags(.{ .context = 4096, .streams = 1 }, false, &why); // a single Mac reads images
 }

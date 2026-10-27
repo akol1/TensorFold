@@ -20,7 +20,7 @@ The test of a kernel fills a `contract.spec.Spec` and hands the harness a few ho
   and the magnitude of the terms each output sums, and can replay the sums in another accumulator.
 - Its served envelope: the shapes the engine calls it at, and for each dimension its tile, the step a valid size
   moves by and the least valid size.
-- Its accumulator (`f32` for every kernel here) and the depth of its longest chain of roundings at a shape, plus any
+- Its accumulator (`f32` where a kernel sums) and the depth of its longest chain of roundings at a shape, plus any
   fp32 operations after the sums (`ops`) and intermediate roundings to the output type (`mids`).
 - Whether it may write in place. If it replaces another kernel, the kernel whose bits it must equal.
 - Its NaN rule: `propagate` (as float64 arithmetic on its formula does), or a stated rule the test checks itself
@@ -28,7 +28,8 @@ The test of a kernel fills a `contract.spec.Spec` and hands the harness a few ho
 - For gate 5, its launch in `zig/src/core/contract/registry.zig`: threads a group and threadgroup bytes (the source's,
   and any its encoder sets) on Metal, or symbol, image, threads a block, dynamic shared bytes and cluster width on CUDA,
   with the limits its compiles recorded. HIP launches are in `zig/src/core/contract/hip_records.zig`: symbol, code
-  object, threads a workgroup and dynamic LDS bytes.
+  object, threads a workgroup and dynamic LDS bytes. The seam's records are in `metal_pair_records.zig`, which
+  `registry.zig` concatenates.
 
 ## The gates
 
@@ -99,7 +100,8 @@ The program exits 1 on any failed gate, any control that stayed green, or any li
    the inputs for a shape and a gate's fill (usually through an input family), `run` launches once and waits, `count`
    and `reference` give the outputs and their float64 values, `simulate` replays the sums for gate 4.
 2. Add it to the runner's list, with its served shapes and tiles.
-3. Add its launches to `registry.zig`, and fill the records from `--offline` (Metal) or `kernel-contract-limits`
+3. Add its launches to `registry.zig`, or to a records file it concatenates as the seam's are, and fill them from
+   `--offline` (Metal) or `kernel-contract-limits`
    (CUDA: nvcc 13.0's in `cuda`, and each later release's set where that release compiles it differently); a HIP
    kernel's go to `hip_records.zig`, filled from `hip-kernel-contract-limits`.
 4. Post the `SUMMARY` lines from each backend you ran in the pull request, and say which chips you could not run.
@@ -131,11 +133,11 @@ Metal: softmax, RMS norm, bf16 top-k, the row projection (3, 4, 6 and 8 bits), a
 and the lane projection (6-bit groups of 32 on every chip; 4- and 8-bit formats on the M5's tensor units, where its
 reg kernel must equal the cooperative one bit for bit), and tile_qmm's prompt tiles and their decode twin (4, 6 and 8
 bits; the twin bit-equal to the tiles), and the TP seam's five kernels: `pair_add_rms` on the fp32 stream, and the bf16
-frame's `pair_stage`, `pair_gather`, `pair_argmax` and `pair_pick`. A seam row is one rank's own window plus the peer's
-bytes, so each kernel is a function of those bytes alone: `pair_stage` copies one rank's half of a frame into the slot
-the relay sends, `pair_gather` writes both halves at the row offsets its rank owns with no arithmetic between them, so
-no exchange rounds a sum across ranks, and `pair_argmax` and `pair_pick` state their own NaN and tie rules. Gate 5 also
-holds the rest of tile_qmm's pipelines and GLM-5.3-Flash's hc_expand_10.
+frame's `pair_stage`, `pair_gather`, `pair_argmax` and `pair_pick`. `pair_stage` reads only its own rank's half of a
+frame and copies it into the slot the relay sends, and `pair_gather` writes both halves of every row, its own half
+natively and the peer's from the relayed words, with no arithmetic between them: no exchange rounds a sum across ranks,
+and `pair_argmax` and `pair_pick` state their own NaN and tie rules. Gate 5 also holds the rest of tile_qmm's pipelines
+and GLM-5.3-Flash's hc_expand_10.
 CUDA: the RMS norm rows (16-byte form and the fp32-out tree), the bf16 residual's norm tails (MLX's rounded rows and
 the once-rounded ones, each checked on its residual and its output, with four controls each dropping a rounding point), Nemotron's router logits (and their 128-row tiles,
 bit-equal to them) and top-k, the latent top-k's decode form (bit-equal to `tf_super_topk`), the latent combine and

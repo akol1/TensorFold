@@ -587,7 +587,7 @@ pub const capabilities = @import("cli_capabilities.zig").capabilities;
 
 const cli = @This();
 
-/// The private flag helpers cli_test.zig and the benchmark's tests check.
+/// The private flag helpers cli_test.zig checks.
 pub const Test = if (builtin.is_test) struct {
     pub const cuda_build = cli.cuda_build;
     pub const native_serves = cli.native_serves;
@@ -596,10 +596,4 @@ pub const Test = if (builtin.is_test) struct {
     pub const gpuFlag = cli.gpuFlag;
     pub const ranks = cli.ranks;
     pub const spillWith = cli.spillWith;
-
-    /// Whether this build serves ``name`` natively: the flag table's answer, not a copy of the platform table.
-    pub fn servesFlag(name: []const u8) bool {
-        for (cli.flags) |f| if (std.mem.eql(u8, f.name, name)) return f.native;
-        return false;
-    }
 } else struct {};

@@ -313,43 +313,6 @@ pub fn autoDrafter(config: json.Value, backend: []const u8, serial: bool) ?[]con
     return model.knownDrafter(config);
 }
 
-/// A --speed-up settings file's rank count: it names rank 0 or 1 and its peer, so the pair is two ranks.
-pub fn pairRankCount(a: Allocator, io: std.Io, path: []const u8, problem: *[]const u8) ?u8 {
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20)) catch {
-        problem.* = std.fmt.allocPrint(a, "--speed-up: cannot read the settings file {s}", .{path}) catch "--speed-up: cannot read the settings file";
-        return null;
-    };
-    const parsed = json.parse(a, bytes) catch {
-        problem.* = "--speed-up: out of memory reading the settings file";
-        return null;
-    };
-    const doc = switch (parsed) {
-        .ok => |v| v,
-        .err => |why| {
-            problem.* = std.fmt.allocPrint(a, "--speed-up: {s} is not a JSON settings file ({s})", .{ path, why }) catch "--speed-up: the settings file is not JSON";
-            return null;
-        },
-    };
-    if (doc != .object) return pairBad(a, problem, path, "it is not a JSON object");
-    const rank = switch (doc.get("rank") orelse return pairBad(a, problem, path, "it names no rank")) {
-        .int => |t| t,
-        else => return pairBad(a, problem, path, "its rank is not a whole number"),
-    };
-    if (!std.mem.eql(u8, rank, "0") and !std.mem.eql(u8, rank, "1")) return pairBad(a, problem, path, "its rank is not 0 or 1");
-    const linked = blk: {
-        if (doc.get("peer") != null) break :blk true;
-        const links = doc.get("links") orelse break :blk false;
-        break :blk links == .array and links.array.len > 0;
-    };
-    if (!linked) return pairBad(a, problem, path, "it names no peer");
-    return 2;
-}
-
-fn pairBad(a: Allocator, problem: *[]const u8, path: []const u8, why: []const u8) ?u8 {
-    problem.* = std.fmt.allocPrint(a, "--speed-up: {s}: {s}; the file is one rank's speed-up settings for the other Mac", .{ path, why }) catch "--speed-up: the settings file does not describe a two-Mac pair";
-    return null;
-}
-
 /// A run from checks to receipt: attached or with its own serve child, then the table and the exit code.
 fn run(ctx: *const Context, args: Args) !u8 {
     const a = ctx.a;
@@ -369,8 +332,6 @@ fn run(ctx: *const Context, args: Args) !u8 {
     const settings: receipt.Settings = .{ .tokens = @intCast(args.tokens), .repetitions = @intCast(args.reps), .temperatures = args.temperatures, .serial = args.serial, .context_tokens = args.context, .managed = args.server == null, .kv_cache = if (args.server == null) (args.kv_cache orelse "bf16") else null };
     var facts: struct { model: receipt.Model, hardware: receipt.Hardware, runtime: receipt.Runtime } = undefined;
     var rank_count: ?u8 = if (args.server == null) 1 else null;
-    // A pair run's receipt says 2 ranks from its settings file: the child refuses --speed-up until the pair opens.
-    if (args.speed_up) |path| rank_count = pairRankCount(a, ctx.io, path, &problem) orelse return fail(ctx, problem);
     var target: stream.Target = undefined;
     var chat_only = args.chat_only;
     var plan: ?server.Plan = null;
@@ -429,7 +390,7 @@ fn run(ctx: *const Context, args: Args) !u8 {
             startup_s = server.startupTimeout(bytes);
             if (startup_s > 600) wait = try std.fmt.allocPrint(a, "The server gets up to {d} s to load {d:.0} GB of weights; --startup-timeout sets another limit.", .{ startup_s, @as(f64, @floatFromInt(bytes)) / 1e9 });
         }
-        plan = .{ .exe = ctx.self_exe orelse try std.process.executablePathAlloc(ctx.io, a), .dir = dir, .backend = backend, .tokens = @intCast(args.tokens), .context = args.context, .drafter_dir = drafter_dir, .serial = args.serial, .kv_cache = args.kv_cache orelse "bf16", .speed_up = args.speed_up };
+        plan = .{ .exe = ctx.self_exe orelse try std.process.executablePathAlloc(ctx.io, a), .dir = dir, .backend = backend, .tokens = @intCast(args.tokens), .context = args.context, .drafter_dir = drafter_dir, .serial = args.serial, .kv_cache = args.kv_cache orelse "bf16" };
         var u: cli.Usage = .{};
         _ = cli.parse(a, (try server.argv(a, plan.?))[2..], &u) catch |e| switch (e) {
             error.Usage => return fail(ctx, try std.fmt.allocPrint(a, "the managed server refuses its flags: {s}", .{u.message})),
@@ -441,7 +402,6 @@ fn run(ctx: *const Context, args: Args) !u8 {
             try std.fmt.allocPrint(a, "This run passes the cached drafter {s}; --drafter none runs without it.", .{k})
         else
             try std.fmt.allocPrint(a, "This run passes no drafter: {s}.", .{uncached});
-        if (args.speed_up != null) note = try std.fmt.allocPrint(a, "--speed-up serves two Macs: this receipt says {d} ranks, and the peer rank must already be waiting in the pair handshake, because the pair is born and dies with every benchmark run.", .{rank_count orelse 2});
     }
     const dest = if (args.output) |o| try expand(ctx, o) else blk: {
         _ = std.Io.Dir.cwd().createDirPathStatus(ctx.io, bench_dir, .fromMode(0o700)) catch {};

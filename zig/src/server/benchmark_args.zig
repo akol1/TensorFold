@@ -22,8 +22,6 @@ pub const Args = struct {
     context: ?i64 = null,
     kv_cache: ?[]const u8 = null, // the managed server's attention cache format (bf16 or fp8)
     drafter: []const u8 = "auto",
-    /// The speed-up settings file passed to the run's own serve child; null serves one Mac.
-    speed_up: ?[]const u8 = null,
     timeout: f64 = 600,
     /// null: scaled with the checkpoint's weights (``server.startupTimeout``).
     startup_timeout: ?f64 = null,
@@ -34,7 +32,7 @@ pub const Args = struct {
     token_stdin: bool = false,
 };
 
-pub const usage_line = "usage: tensorfold benchmark [-h] [--backend {auto,mlx,cuda,rocm}] [--server SERVER] [--model-id MODEL_ID] [--chat-only] [--tokens TOKENS] [--reps REPS] [--temperatures TEMPERATURES] [--serial] [--context CONTEXT] [--kv-cache {bf16,fp8}] [--drafter DRAFTER] [--speed-up SPEED_UP] [--timeout TIMEOUT] [--startup-timeout STARTUP_TIMEOUT] [--output OUTPUT] [--publish] [--yes] [--upload-url UPLOAD_URL] [--token-stdin] [target] [file]";
+pub const usage_line = "usage: tensorfold benchmark [-h] [--backend {auto,mlx,cuda,rocm}] [--server SERVER] [--model-id MODEL_ID] [--chat-only] [--tokens TOKENS] [--reps REPS] [--temperatures TEMPERATURES] [--serial] [--context CONTEXT] [--kv-cache {bf16,fp8}] [--drafter DRAFTER] [--timeout TIMEOUT] [--startup-timeout STARTUP_TIMEOUT] [--output OUTPUT] [--publish] [--yes] [--upload-url UPLOAD_URL] [--token-stdin] [target] [file]";
 
 const Flag = struct { name: []const u8, value: bool = true, help: []const u8 };
 
@@ -50,7 +48,6 @@ pub const flags = [_]Flag{
     .{ .name = "--context", .help = "explicit prompt plus reply capacity" },
     .{ .name = "--kv-cache", .help = "the managed server's attention cache format: bf16 (default) or fp8" },
     .{ .name = "--drafter", .help = "a drafter checkpoint directory or cached repo ID for the managed server; auto (default) passes the family's own drafter when cached; none passes none" },
-    .{ .name = "--speed-up", .help = "serve on two Macs with this rank's TensorFold speed-up settings file; the pair is born and dies with the run, so the peer must already be waiting" },
     .{ .name = "--download", .value = false, .help = "not supported natively; run tensorfold pull MODEL first" },
     .{ .name = "--timeout", .help = "request timeout in seconds (default: 600)" },
     .{ .name = "--startup-timeout", .help = "managed server startup timeout in seconds (default: 600, plus 6 per GB of weights past 20 GB, at most 3600)" },
@@ -133,7 +130,6 @@ pub fn parse(a: Allocator, argv: []const []const u8, problem: *[]const u8) error
             out.kv_cache = value;
         }
         if (is(name, "--drafter")) out.drafter = value;
-        if (is(name, "--speed-up")) out.speed_up = value;
         if (is(name, "--timeout")) out.timeout = try float(a, problem, name, value);
         if (is(name, "--startup-timeout")) out.startup_timeout = try float(a, problem, name, value);
         if (is(name, "--output")) out.output = value;
@@ -165,7 +161,6 @@ fn checks(a: Allocator, out: *Args, temperatures: []const u8, problem: *[]const 
     };
     if (out.chat_only and (out.action != .run or out.server == null)) return invalid(problem, "--chat-only applies only to a v2 run with --server; managed runs use the native family declaration");
     if (out.kv_cache != null and out.server != null) return invalid(problem, "--kv-cache applies only to a managed run; an attached server's cache format is its own");
-    if (out.speed_up != null and out.server != null) return invalid(problem, "--speed-up applies to the benchmark's own serve child; an attached --server cannot take it");
     if (out.action == .publish or out.action == .inspect) {
         if (out.file == null) return invalid(problem, "This action needs a receipt JSON file");
         return;

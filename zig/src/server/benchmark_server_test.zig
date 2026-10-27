@@ -6,7 +6,6 @@ const server = @import("benchmark_server.zig");
 const stop = @import("benchmark_stop.zig");
 const fake = @import("benchmark_fake.zig");
 const posix = std.posix;
-const servesFlag = cli.Test.servesFlag;
 
 const plan: server.Plan = .{ .exe = "/opt/example/tensorfold-native", .dir = "/models/x", .backend = "", .tokens = 256, .context = 4096, .drafter_dir = null, .serial = true };
 
@@ -24,33 +23,6 @@ test "the child's flags parse as serve flags and carry none that native serve re
     const with_tp = try std.mem.concat(a, []const u8, &.{ args[2..], &.{ "--tp", "1" } });
     try std.testing.expectError(error.Usage, cli.parse(a, with_tp, &u));
     try std.testing.expect(std.mem.indexOf(u8, u.message, "not served") != null);
-}
-
-test "--speed-up goes to the child once, as serve's own flag on this rank's settings file; absent when the plan has none" {
-    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var p = plan;
-    p.backend = server.buildBackend();
-    p.speed_up = "settings/rank0.json";
-    const args = try server.argv(a, p);
-    var seen: usize = 0;
-    for (args) |x| {
-        if (std.mem.eql(u8, x, "--speed-up")) seen += 1;
-    }
-    try std.testing.expectEqual(@as(usize, 1), seen);
-    var u: cli.Usage = .{};
-    // the CUDA build does not serve --speed-up: the flag is the child's own on a Metal build, and refused elsewhere
-    if (servesFlag("--speed-up")) {
-        const parsed = try cli.parse(a, args[2..], &u);
-        try std.testing.expectEqualStrings("settings/rank0.json", parsed.speed_up.?);
-    } else {
-        try std.testing.expectError(error.Usage, cli.parse(a, args[2..], &u));
-        try std.testing.expect(std.mem.indexOf(u8, u.message, "not served") != null);
-    }
-    // a plan without --speed-up never carries it, so a single-Mac benchmark cannot inherit it by accident
-    p.speed_up = null;
-    for (try server.argv(a, p)) |x| try std.testing.expect(!std.mem.eql(u8, x, "--speed-up"));
 }
 
 test "drafts stay on unless serial: only serial adds --no-drafts, and a drafter directory goes to --drafter" {

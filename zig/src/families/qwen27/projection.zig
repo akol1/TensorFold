@@ -6,11 +6,12 @@ const row = @import("core").row_projection;
 const lane = @import("core").lane_projection;
 
 pub const Ref = struct { buffer: mtl.Buffer, offset: usize = 0 };
-/// A device matrix; `runs` non-empty means fused members of different widths, each its own product into these rows.
-pub const Linear = struct { words: Ref, pairs: Ref, n: u32, k: u32, tile: u32, slices: u32, raw: ?row.Weights = null, bits: u8 = 4, group: u32 = 64, runs: []const Run = &.{} };
+/// A device matrix; `runs` non-empty means fused members of different widths. `gn`: the checkpoint's rows (0 = `n`).
+pub const Linear = struct { words: Ref, pairs: Ref, n: u32, k: u32, tile: u32, slices: u32, raw: ?row.Weights = null, bits: u8 = 4, group: u32 = 64, runs: []const Run = &.{}, gn: usize = 0 };
 /// One product inside a mixed fused matrix, writing output columns [first, first + linear.n).
 pub const Run = struct { linear: Linear, first: u32 };
-pub const Triple = struct { weight: checkpoint.Tensor, scales: checkpoint.Tensor, biases: checkpoint.Tensor, bits: u8 = 4, group: u32 = 64, k: usize = 0, k0: usize = 0 };
+/// Staged tensors: `k`/`k0` the column window, `gn` the part's checkpoint rows when `weight.shape[0]` is a slice.
+pub const Triple = struct { weight: checkpoint.Tensor, scales: checkpoint.Tensor, biases: checkpoint.Tensor, bits: u8 = 4, group: u32 = 64, k: usize = 0, k0: usize = 0, gn: usize = 0 };
 
 pub fn split(n: usize, k: usize) !u32 {
     if (n == 0 or k == 0 or n % 4 != 0 or k % 64 != 0) return error.BadProjectionShape;
@@ -33,6 +34,18 @@ pub fn promptSplit(n: usize, k: usize) ?u32 {
     return null;
 }
 
+/// A part's rows in the checkpoint, which are the staged rows on one Mac.
+fn globalRows(p: Triple) usize {
+    return if (p.gn != 0) p.gn else p.weight.shape[0];
+}
+
+/// The fused matrix's rows in the checkpoint: what the M5 and prompt tables key on.
+fn splitRows(parts: []const Triple) usize {
+    var rows: usize = 0;
+    for (parts) |p| rows += globalRows(p);
+    return rows;
+}
+
 pub fn prepare(device: mtl.Device, allocator: std.mem.Allocator, owned: *std.ArrayList(mtl.Buffer), parts: []const Triple, tile: u32) !Linear {
     if (tile != 32 or parts.len == 0) return error.BadProjectionShape;
     const bits = parts[0].bits;
@@ -43,8 +56,9 @@ pub fn prepare(device: mtl.Device, allocator: std.mem.Allocator, owned: *std.Arr
     const k = if (parts[0].k != 0) parts[0].k else kg;
     const k0 = parts[0].k0;
     if (k == 0 or k % group != 0 or k0 % group != 0 or k0 + k > kg) return error.BadAffineMetadata;
-    // One product takes one K split from the leading block; unequal q | k | v cannot share an equal-height heuristic.
-    var slices = try split(parts[0].weight.shape[0], k);
+    // A split is an fp32 order: the leading member's checkpoint rows key it, and every part's rows key the M5 tables.
+    const gn = splitRows(parts);
+    var slices = try split(globalRows(parts[0]), k);
     var n: usize = 0;
     for (parts) |p| {
         const rows = p.weight.shape[0];
@@ -53,9 +67,9 @@ pub fn prepare(device: mtl.Device, allocator: std.mem.Allocator, owned: *std.Arr
         if (p.scales.dtype != .bf16 or p.biases.dtype != .bf16 or p.scales.rank != 2 or p.biases.rank != 2 or p.scales.shape[0] != rows or p.biases.shape[0] != rows or p.scales.shape[1] != kg / group or p.biases.shape[1] != kg / group) return error.BadAffineMetadata;
         n = try std.math.add(usize, n, rows);
     }
-    if (!device.tensorUnits() or n % tile != 0) return prepareRows(device, allocator, owned, parts, n, k, kg, k0, tile, slices);
-    if (bits != 4 or group != 64) return prepareLanes(device, allocator, owned, parts, n, k, kg, k0, tile, slices);
-    slices = m5Split(n, k) orelse slices;
+    if (!device.tensorUnits() or n % tile != 0) return prepareRows(device, allocator, owned, parts, n, k, kg, k0, tile, slices, gn);
+    if (bits != 4 or group != 64) return prepareLanes(device, allocator, owned, parts, n, k, kg, k0, tile, slices, gn);
+    slices = m5Split(gn, k) orelse slices;
     const w = try device.buffer(n * k / 2, mtl.ResourceOptions.shared | mtl.ResourceOptions.untracked);
     owned.append(allocator, w) catch |err| {
         w.deinit();
@@ -86,7 +100,7 @@ pub fn prepare(device: mtl.Device, allocator: std.mem.Allocator, owned: *std.Arr
         };
         base += rows;
     }
-    return .{ .words = .{ .buffer = w }, .pairs = .{ .buffer = sb }, .n = @intCast(n), .k = @intCast(k), .tile = tile, .slices = slices };
+    return .{ .words = .{ .buffer = w }, .pairs = .{ .buffer = sb }, .n = @intCast(n), .k = @intCast(k), .tile = tile, .slices = slices, .gn = gn };
 }
 
 test "stacked gate-up keeps the member K split rather than recomputing it from stacked width" {
@@ -97,7 +111,47 @@ test "stacked gate-up keeps the member K split rather than recomputing it from s
     try std.testing.expectEqual(@as(u32, 8), try split(5120, 17408));
 }
 
-fn prepareRows(device: mtl.Device, allocator: std.mem.Allocator, owned: *std.ArrayList(mtl.Buffer), parts: []const Triple, n: usize, k: usize, kg: usize, k0: usize, tile: u32, slices: u32) !Linear {
+/// A staged matrix of `rows` rows whose checkpoint matrix has `gn` (0: the rows are the whole matrix).
+fn tri(rows: usize, gn: usize, blank: checkpoint.Tensor) Triple {
+    var t = blank;
+    t.shape[0] = rows;
+    return .{ .weight = t, .scales = t, .biases = t, .gn = gn };
+}
+
+test "a rank's row slice keeps the checkpoint matrix's K split" {
+    const blank: checkpoint.Tensor = .{ .buffer = undefined, .offset = 0, .bytes = 0, .dtype = .u32 };
+    // gate | up: a rank stages 8,704 rows a member of the checkpoint's 17,408, so the leading member keys 2, not 4.
+    const gate = [2]Triple{ tri(8704, 17408, blank), tri(8704, 17408, blank) };
+    try std.testing.expectEqual(@as(usize, 17408), globalRows(gate[0]));
+    try std.testing.expectEqual(@as(u32, 2), try split(globalRows(gate[0]), 5120));
+    try std.testing.expectEqual(@as(u32, 4), try split(gate[0].weight.shape[0], 5120));
+    // The fused matrix's checkpoint rows double, as the single Mac's stack: 34,816, the tables' key.
+    try std.testing.expectEqual(@as(usize, 34816), splitRows(&gate));
+    // q: 12,288 checkpoint rows, 6,144 a rank's, 4 and 8 slices.
+    const q = tri(6144, 12288, blank);
+    try std.testing.expectEqual(@as(u32, 4), try split(globalRows(q), 5120));
+    try std.testing.expectEqual(@as(u32, 8), try split(q.weight.shape[0], 5120));
+    // down_proj: the M5 and prompt tables hold the checkpoint's 5,120 rows over 17,408, which a rank's 2,560 miss.
+    const down = tri(2560, 5120, blank);
+    try std.testing.expectEqual(@as(?u32, 4), m5Split(splitRows(&.{down}), 17408));
+    try std.testing.expectEqual(@as(?u32, null), m5Split(down.weight.shape[0], 17408));
+    try std.testing.expectEqual(@as(?u32, 2), promptSplit(splitRows(&.{down}), 17408));
+    try std.testing.expectEqual(@as(?u32, null), promptSplit(down.weight.shape[0], 17408));
+    // q | k | v: three blocks of one 10,240-row tensor, so the blocks' checkpoint rows sum to its width.
+    const qkv = [3]Triple{ tri(1024, 2048, blank), tri(1024, 2048, blank), tri(3072, 6144, blank) };
+    try std.testing.expectEqual(@as(usize, 10240), splitRows(&qkv));
+    try std.testing.expectEqual(@as(?u32, 2), m5Split(splitRows(&qkv), 5120));
+    try std.testing.expectEqual(@as(?u32, 1), promptSplit(splitRows(&qkv), 5120));
+    try std.testing.expectEqual(@as(u32, 8), try split(globalRows(qkv[0]), 5120));
+    // A rank's three local blocks are 5,120 rows and key neither table, so the fallback split would stand.
+    var local: usize = 0;
+    for (qkv) |part| local += part.weight.shape[0];
+    try std.testing.expectEqual(@as(usize, 5120), local);
+    try std.testing.expectEqual(@as(?u32, null), m5Split(local, 5120));
+    try std.testing.expectEqual(@as(?u32, null), promptSplit(local, 5120));
+}
+
+fn prepareRows(device: mtl.Device, allocator: std.mem.Allocator, owned: *std.ArrayList(mtl.Buffer), parts: []const Triple, n: usize, k: usize, kg: usize, k0: usize, tile: u32, slices: u32, gn: usize) !Linear {
     const options = mtl.ResourceOptions.shared | mtl.ResourceOptions.untracked;
     const bits: usize = parts[0].bits;
     const ng = k / parts[0].group;
@@ -124,11 +178,11 @@ fn prepareRows(device: mtl.Device, allocator: std.mem.Allocator, owned: *std.Arr
     }
     const raw = row.Weights{ .w = w, .scales = scale, .biases = bias, .n = n, .k = k, .group = parts[0].group, .bits = parts[0].bits, .sum = .f32 };
     try raw.validate();
-    return .{ .words = .{ .buffer = w }, .pairs = .{ .buffer = scale }, .n = @intCast(n), .k = @intCast(k), .tile = tile, .slices = slices, .raw = raw, .bits = parts[0].bits, .group = parts[0].group };
+    return .{ .words = .{ .buffer = w }, .pairs = .{ .buffer = scale }, .n = @intCast(n), .k = @intCast(k), .tile = tile, .slices = slices, .raw = raw, .bits = parts[0].bits, .group = parts[0].group, .gn = gn };
 }
 
 /// Widths other than 4/64 on tensor units: lane_projection.weight_layout byte copies for the non-reg lane kernel.
-fn prepareLanes(device: mtl.Device, allocator: std.mem.Allocator, owned: *std.ArrayList(mtl.Buffer), parts: []const Triple, n: usize, k: usize, kg: usize, k0: usize, tile: u32, slices: u32) !Linear {
+fn prepareLanes(device: mtl.Device, allocator: std.mem.Allocator, owned: *std.ArrayList(mtl.Buffer), parts: []const Triple, n: usize, k: usize, kg: usize, k0: usize, tile: u32, slices: u32, gn: usize) !Linear {
     const options = mtl.ResourceOptions.shared | mtl.ResourceOptions.untracked;
     const layout = lane.Layout{ .n = n, .k = k, .format = .{ .bits = parts[0].bits, .group = parts[0].group }, .sk = slices };
     try layout.validate();
@@ -139,7 +193,7 @@ fn prepareLanes(device: mtl.Device, allocator: std.mem.Allocator, owned: *std.Ar
         packTiles(.{ .words = p.weight.host(u32), .scales = p.scales.host(u16), .biases = p.biases.host(u16), .rows = p.weight.shape[0], .kg = kg, .k0 = k0 }, base, n, k, parts[0].bits, parts[0].group, w.slice(u32, layout.weightWords()), sb.slice(u16, layout.metadataElements()));
         base += p.weight.shape[0];
     }
-    return .{ .words = .{ .buffer = w }, .pairs = .{ .buffer = sb }, .n = @intCast(n), .k = @intCast(k), .tile = tile, .slices = slices, .bits = parts[0].bits, .group = parts[0].group };
+    return .{ .words = .{ .buffer = w }, .pairs = .{ .buffer = sb }, .n = @intCast(n), .k = @intCast(k), .tile = tile, .slices = slices, .bits = parts[0].bits, .group = parts[0].group, .gn = gn };
 }
 
 /// One member as stored: words [rows][kg*bits/32], scales and biases [rows][kg/group], columns [k0, k0 + k).

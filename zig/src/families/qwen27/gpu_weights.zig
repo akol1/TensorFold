@@ -94,7 +94,7 @@ const Builder = struct {
         const weight = try checked(tensors[0], .u32, &.{ p.n, k * p.w.bits / 32 });
         const scales = try checked(tensors[1], .bf16, &.{ p.n, k / p.w.group });
         const biases = try checked(tensors[2], .bf16, &.{ p.n, k / p.w.group });
-        return .{ .weight = try rowView(weight, p.span), .scales = try rowView(scales, p.span), .biases = try rowView(biases, p.span), .bits = p.w.bits, .group = p.w.group, .k = p.k, .k0 = p.k0 };
+        return .{ .weight = try rowView(weight, p.span), .scales = try rowView(scales, p.span), .biases = try rowView(biases, p.span), .bits = p.w.bits, .group = p.w.group, .k = p.k, .k0 = p.k0, .gn = p.n };
     }
 
     /// Parts at their widths and K windows, all staged before any is viewed: the stage is one reused buffer.
@@ -121,8 +121,8 @@ const Builder = struct {
         return b.stack(triples[0..parts.len]);
     }
 
-    /// One tensor whose rows a rank takes in blocks (the GDN's q | k | v): staged once, fused in block order.
-    fn blocks(b: Builder, module: []const u8, n: usize, k: usize, w: Width, spans: []const cfg.Span) !Linear {
+    /// One tensor a rank takes in blocks (GDN q | k | v); `rows` are each block's checkpoint rows, which prepare sums.
+    fn blocks(b: Builder, module: []const u8, n: usize, k: usize, w: Width, spans: []const cfg.Span, rows: []const usize) !Linear {
         var arena = std.heap.ArenaAllocator.init(b.allocator);
         defer arena.deinit();
         if (k * w.bits % 32 != 0 or k % w.group != 0) return error.BadNativeTensor;
@@ -135,9 +135,9 @@ const Builder = struct {
         const scales = try checked(try b.stage.read(b.checkpoint, names[1]), .bf16, &.{ n, k / w.group });
         const biases = try checked(try b.stage.read(b.checkpoint, names[2]), .bf16, &.{ n, k / w.group });
         var triples: [3]projection.Triple = undefined;
-        if (spans.len > triples.len) return error.BadProjectionShape;
-        for (spans, triples[0..spans.len]) |span, *t| {
-            t.* = .{ .weight = try rowView(weight, span), .scales = try rowView(scales, span), .biases = try rowView(biases, span), .bits = w.bits, .group = w.group };
+        if (spans.len > triples.len or rows.len != spans.len) return error.BadProjectionShape;
+        for (spans, rows, triples[0..spans.len]) |span, gn, *t| {
+            t.* = .{ .weight = try rowView(weight, span), .scales = try rowView(scales, span), .biases = try rowView(biases, span), .bits = w.bits, .group = w.group, .gn = gn };
         }
         return b.stack(triples[0..spans.len]);
     }
@@ -193,6 +193,8 @@ const Builder = struct {
         }
         var fused = runs[0].linear;
         fused.n = first;
+        fused.gn = 0;
+        for (runs) |run| fused.gn += run.linear.gn;
         fused.raw = null;
         fused.runs = runs;
         return fused;
@@ -213,16 +215,17 @@ const Builder = struct {
         const w = b.widths.layers[i];
         const M = widths.Member;
         const qkv = s.qkvSpans();
+        const qkvRows = [3]usize{ g.k_heads * g.dk, g.k_heads * g.dk, g.gdnValueDim() };
         const convRows = s.convSpans();
         const mixer: @FieldType(Layer, "mixer") = switch (c.kind(i)) {
             .linear => .{ .linear = .{
-                .qkv = try b.blocks(try Name.full(a, prefix, "linear_attn.in_proj_qkv"), g.gdnQkvDim(), g.hidden, w[@backingInt(M.qkv)], &qkv),
+                .qkv = try b.blocks(try Name.full(a, prefix, "linear_attn.in_proj_qkv"), g.gdnQkvDim(), g.hidden, w[@backingInt(M.qkv)], &qkv, &qkvRows),
                 .zba = try b.linear(&.{
                     .{ .module = try Name.full(a, prefix, "linear_attn.in_proj_z"), .n = g.gdnValueDim(), .w = w[@backingInt(M.z)], .span = s.zRows() },
                     .{ .module = try Name.full(a, prefix, "linear_attn.in_proj_b"), .n = g.v_heads, .w = w[@backingInt(M.b)], .span = s.abRows() },
                     .{ .module = try Name.full(a, prefix, "linear_attn.in_proj_a"), .n = g.v_heads, .w = w[@backingInt(M.a)], .span = s.abRows() },
                 }, g.hidden),
-                .out = try b.linear(&.{.{ .module = try Name.full(a, prefix, "linear_attn.out_proj"), .n = g.hidden, .w = w[@backingInt(M.out)], .k = s.gdnCols().len, .k0 = s.gdnCols().from }}, g.gdnValueDim()),
+                .out = try b.linear(&.{.{ .module = try Name.full(a, prefix, "linear_attn.out_proj"), .n = g.hidden, .w = w[@backingInt(M.out)], .span = s.outputRows() }}, g.gdnValueDim()),
                 .conv = try b.conv(try Name.full(a, prefix, "linear_attn.conv1d.weight"), g.conv_kernel, g.gdnQkvDim(), &convRows),
                 .a_log = try rowView(try b.tensor(try Name.full(a, prefix, "linear_attn.A_log"), .bf16, &.{g.v_heads}), s.valueRows()),
                 .dt = try rowView(try b.tensor(try Name.full(a, prefix, "linear_attn.dt_bias"), .bf16, &.{g.v_heads}), s.valueRows()),
@@ -234,7 +237,7 @@ const Builder = struct {
                     .{ .module = try Name.full(a, prefix, "self_attn.k_proj"), .n = g.kvDim(), .w = w[@backingInt(M.k)], .span = s.kvRows() },
                     .{ .module = try Name.full(a, prefix, "self_attn.v_proj"), .n = g.kvDim(), .w = w[@backingInt(M.v)], .span = s.kvRows() },
                 }, g.hidden),
-                .out = try b.linear(&.{.{ .module = try Name.full(a, prefix, "self_attn.o_proj"), .n = g.hidden, .w = w[@backingInt(M.o)], .k = s.attentionCols().len, .k0 = s.attentionCols().from }}, g.heads * g.head_dim),
+                .out = try b.linear(&.{.{ .module = try Name.full(a, prefix, "self_attn.o_proj"), .n = g.hidden, .w = w[@backingInt(M.o)], .span = s.outputRows() }}, g.heads * g.head_dim),
                 .q_norm = try b.tensor(try Name.full(a, prefix, "self_attn.q_norm.weight"), .bf16, &.{c.head_dim}),
                 .k_norm = try b.tensor(try Name.full(a, prefix, "self_attn.k_norm.weight"), .bf16, &.{c.head_dim}),
             } },
@@ -243,7 +246,7 @@ const Builder = struct {
             .{ .module = try Name.full(a, prefix, "mlp.gate_proj"), .n = g.intermediate, .w = w[@backingInt(M.gate)], .span = s.intermediateRows() },
             .{ .module = try Name.full(a, prefix, "mlp.up_proj"), .n = g.intermediate, .w = w[@backingInt(M.up)], .span = s.intermediateRows() },
         }, g.hidden);
-        const down = try b.linear(&.{.{ .module = try Name.full(a, prefix, "mlp.down_proj"), .n = g.hidden, .w = w[@backingInt(M.down)], .k = s.downCols().len, .k0 = s.downCols().from }}, g.intermediate);
+        const down = try b.linear(&.{.{ .module = try Name.full(a, prefix, "mlp.down_proj"), .n = g.hidden, .w = w[@backingInt(M.down)], .span = s.outputRows() }}, g.intermediate);
         return .{ .norm = try b.tensor(try Name.full(a, prefix, "input_layernorm.weight"), .bf16, &.{c.hidden}), .post_norm = try b.tensor(try Name.full(a, prefix, "post_attention_layernorm.weight"), .bf16, &.{c.hidden}), .gu = gu, .down = down, .mixer = mixer };
     }
 };

@@ -188,6 +188,11 @@ pub const Shard = struct {
     pub fn vocabRows(s: Shard) Span {
         return s.rows(s.global.vocab, s.local.vocab);
     }
+
+    /// `o_proj`/`out_proj`/`down_proj` rows: this rank's block over the whole K, or the width when replicated.
+    pub fn outputRows(s: Shard) Span {
+        return if (s.splitsAttention()) s.rows(s.global.hidden, s.global.hidden / s.ranks) else .{ .from = 0, .len = s.global.hidden };
+    }
 };
 
 /// Mode: full halves attention, linear attention and MLP; mlp splits only the MLP and head, so one seam a layer.
@@ -197,7 +202,7 @@ pub const Mode = enum { full, mlp };
 pub fn split(c: *Config, rank: u32, ranks: u32, mode: Mode) !Shard {
     if (ranks < 2 or ranks > 8 or rank >= ranks) return error.BadShard;
     if (c.intermediate % ranks != 0 or c.vocab % ranks != 0) return error.BadShard;
-    if (mode == .full and (c.heads % ranks != 0 or c.kv_heads % ranks != 0 or c.k_heads % ranks != 0 or c.v_heads % ranks != 0)) return error.BadShard;
+    if (mode == .full and (c.heads % ranks != 0 or c.kv_heads % ranks != 0 or c.k_heads % ranks != 0 or c.v_heads % ranks != 0 or c.hidden % ranks != 0)) return error.BadShard;
     const global = c.*;
     if (mode == .full) {
         c.heads /= ranks;

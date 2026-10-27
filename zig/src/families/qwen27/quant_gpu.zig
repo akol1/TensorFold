@@ -144,7 +144,9 @@ pub const Kernels = struct {
             return k.strided(input_encoder, raw, x, y, rows, @intCast(raw.n));
         };
         var span = profile.begin(k.profiler, input_encoder, .dense);
-        const sk = if (k.prompt) projection.promptSplit(p.n, p.k) orelse p.slices else p.slices;
+        // Prompt rows take the checkpoint matrix's split, as decoded rows already do through `p.slices`.
+        const gn = if (p.gn != 0) p.gn else p.n;
+        const sk = if (k.prompt) projection.promptSplit(gn, p.k) orelse p.slices else p.slices;
         span.shape = .{ .n = p.n, .k = p.k, .sk = sk, .bits = p.bits };
         errdefer span.cancel();
         const e = span.encoder;

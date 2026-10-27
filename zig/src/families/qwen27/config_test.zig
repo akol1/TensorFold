@@ -186,6 +186,8 @@ test "a full shard takes whole heads and boundary-aligned row blocks" {
     try expectSpan(s.intermediateRows(), 8704, 8704);
     try expectSpan(s.downCols(), 8704, 8704);
     try expectSpan(s.vocabRows(), 124160, 124160);
+    // o_proj, out_proj and down_proj own rows of the hidden width, each over the whole input K
+    try expectSpan(s.outputRows(), 2560, 2560);
 }
 
 test "the embedding bound is the whole table on a pair rank, not the shard's width" {
@@ -211,6 +213,7 @@ test "rank 0's blocks start at the tensor's front" {
     try expectSpan(blocks[2], 4096, 3072);
     try expectSpan(s.zRows(), 0, 3072);
     try expectSpan(s.valueRows(), 0, 24);
+    try expectSpan(s.outputRows(), 0, 2560);
 }
 
 test "the GDN qkv blocks tile the global tensor exactly across ranks" {
@@ -253,6 +256,8 @@ test "an mlp shard replicates attention and splits only the mlp and the head" {
     try expectSpan(s.gdnCols(), 0, 6144);
     try expectSpan(s.intermediateRows(), 8704, 8704);
     try expectSpan(s.downCols(), 8704, 8704);
+    // an mlp shard keeps the mixers and down_proj replicated, so their output rows are the whole width
+    try expectSpan(s.outputRows(), 0, 5120);
 }
 
 test "the fused zba row keeps the tiled projection and each rank's a and b" {

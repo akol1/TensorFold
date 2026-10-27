@@ -98,9 +98,9 @@ so beyond `--parallel` and the settings file each command is what that Mac runs 
 Each rank runs every layer and splits the even widths: 12 of the 24 attention heads, 2 of the 4 key/value heads,
 half of the linear attention's heads and value channels, 8,704 of the 17,408-wide MLP, and 124,160 of the untied
 lm_head's 248,320 rows.
-Each projection's output rows are computed on the rank that owns them, with the full-K reduction a single Mac uses:
-no cross-rank partial sum exists, and a seam's all-gathers carry bf16 input activations and output halves
-bit-exactly, so the pair needs no tie policy.
+Each projection's output rows are computed on the rank that owns them, with the full-K reduction a single Mac uses, so
+no cross-rank partial sum exists. A seam's `pair_gather` carries the two bf16 halves, input activations and output rows,
+bit-exactly, and the pair needs no tie policy.
 Embeddings and norms stay whole on both Macs, so the 248,320-row table is not split and a token id means the same
 thing on both ranks.
 At each decided token the pair takes the argmax of the 248,320-row logits gathered from the two output halves,
@@ -112,8 +112,9 @@ slot's state.
 A pair therefore keeps no prompt cache, learns nothing and drafts nothing.
 A request that samples or carries a grammar fails too, since a pair serves one greedy stream.
 
-A pair reply is a single Mac's reply token for token. The pair-vs-single gate is `tp_check` (`tf-qwen27-tp-check`):
-it returns `error.PairTokensDifferFromSingleMac` on any difference, with no exemptions.
+A pair's logits are byte-identical to one Mac's on the recorded fixtures, so its reply is a single Mac's token for
+token. The pair-vs-single gate is `tp_check` (`tf-qwen27-tp-check`), which returns
+`error.PairTokensDifferFromSingleMac` on any token difference, with no exemptions.
 
 ## Weights other than 4-bit
 

@@ -8,7 +8,7 @@ usage() {
 usage: pair_supervise.sh up|down|status|watch
 
   up      start rank 1 on $PEER, then rank 0 here, and wait for both to answer /health
-  down    stop both ranks
+  down    stop both ranks this script started (the pids in the two pidfiles; never by command-line pattern)
   status  pids, ports and each rank's last log lines
   watch   up, then restart both whenever either rank stops answering (unattended)
 
@@ -22,12 +22,16 @@ required  PEER              rank 1's ssh target (key auth: ssh -o BatchMode=yes 
 optional  PORT0=4100 PORT1=4101 CONTEXT=32768 KEEP_WARM=600 SERVE_FLAGS='' SERVE_ENVS=''
           STATE=${TMPDIR:-/tmp}/tensorfold-pair      local logs, pidfile and the port count
           PEER_STATE=${TMPDIR:-/tmp}/tensorfold-pair the same on rank 1's Mac, in that Mac's own TMPDIR
-          PEER_MODEL=$MODEL  SSH_OPTS='-o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no'
+          PEER_MODEL=$MODEL  SSH_OPTS='-o BatchMode=yes -o ConnectTimeout=5'
           POLL=2             seconds between liveness probes and the first restart delay
           STABLE=60          seconds a pair must stay up before the restart delay drops back to POLL
           STOP_WAIT=12       seconds a rank may take to exit after the stop signal, before it is killed
           READY_TIMEOUT=300  seconds either rank may take from process start to answering /health
           ALLOW_MISMATCH=1   start even though the two binaries differ (only for a deliberate A/B test)
+
+The peer's host key is verified: SSH_OPTS keeps BatchMode=yes and the default asks the known-hosts file, so an
+unknown or changed key fails the connection instead of being accepted. Set SSH_OPTS yourself to override that
+policy deliberately; nothing here turns the check off for you.
 USAGE
 }
 
@@ -42,7 +46,7 @@ STOP_WAIT=${STOP_WAIT:-12}
 READY_TIMEOUT=${READY_TIMEOUT:-300}
 STATE=${STATE:-${TMPDIR:-/tmp}/tensorfold-pair}
 PEER_STATE=${PEER_STATE:-${TMPDIR:-/tmp}/tensorfold-pair}
-SSH_OPTS=${SSH_OPTS:--o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no}
+SSH_OPTS=${SSH_OPTS:--o BatchMode=yes -o ConnectTimeout=5}
 SERVE_FLAGS=${SERVE_FLAGS:-}
 SERVE_ENVS=${SERVE_ENVS:-}
 PEER_MODEL=${PEER_MODEL:-${MODEL:-}}
@@ -69,11 +73,16 @@ now() { date +%s; }
 health0() { curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$PORT0/health" 2>/dev/null; }
 health1() { peer "curl -fsS -m 2 -o /dev/null http://127.0.0.1:$PORT1/health" 2>/dev/null; }
 
-local_pid() { [ -f "$PID0" ] && cat "$PID0" 2>/dev/null || true; }
-peer_pid() { peer "cat '$PID1' 2>/dev/null" 2>/dev/null || true; }
+# A pidfile holds the pid and the binary path this script started, so a stop works on a host where MODEL, settings
+# or even BIN are no longer in the environment, and it can tell the rank apart from a later process the kernel handed
+# the same pid. The pid is the first word; everything after it is the binary path.
+local_pid() { [ -f "$PID0" ] && cut -d' ' -f1 "$PID0" 2>/dev/null || true; }
+local_bin() { [ -f "$PID0" ] && cut -d' ' -f2- "$PID0" 2>/dev/null || true; }
+peer_pid() { peer "cut -d' ' -f1 '$PID1' 2>/dev/null" 2>/dev/null || true; }
+peer_bin() { peer "cut -d' ' -f2- '$PID1' 2>/dev/null" 2>/dev/null || true; }
 
 alive0() { p=$(local_pid); [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
-alive1() { peer "kill -0 \$(cat '$PID1' 2>/dev/null) 2>/dev/null" 2>/dev/null; }
+alive1() { peer "kill -0 \$(cut -d' ' -f1 '$PID1' 2>/dev/null) 2>/dev/null" 2>/dev/null; }
 
 need_peer() {
   [ -n "$PEER" ] || { say "set PEER to the rank 1 ssh target"; return 1; }
@@ -107,9 +116,11 @@ check_binaries() {
 start_rank1() {
   peer "mkdir -p '$PEER_STATE'"
   say "starting rank 1 on $PEER (it waits for rank 0 in the pair handshake)"
-  peer "cd '$PEER_STATE' && nohup env $SERVE_ENVS '$PEER_BIN' serve '$PEER_MODEL' --speed-up '$PEER_SETTINGS'" \
+  # The background subshell execs the rank, so the pid written to the pidfile is the rank itself and not a launcher
+  # shell that would die first and leave the rank running: 'down' signals the recorded pid and nothing else.
+  peer "( cd '$PEER_STATE' && exec nohup env $SERVE_ENVS '$PEER_BIN' serve '$PEER_MODEL' --speed-up '$PEER_SETTINGS'" \
        "--port $PORT1 --context $CONTEXT --keep-warm $KEEP_WARM --parallel 1 --no-update-check $SERVE_FLAGS" \
-       ">$LOG1 2>&1 & echo \$! > '$PID1'"
+       ">$LOG1 2>&1 ) & echo \$! '$PEER_BIN' > '$PID1'"
   sleep 2
   if ! alive1; then
     say "rank 1 exited at once: last lines of $PEER:$LOG1"
@@ -123,13 +134,14 @@ start_rank0() {
   say "starting rank 0 here"
   cd "$STATE"
   # The launcher is a subshell so the rank's death is never this shell's job to report: a supervisor log stays one
-  # line per event instead of one per killed child.
+  # line per event instead of one per killed child. It execs the rank for the same reason as rank 1: the recorded pid
+  # must be the rank itself, so a stop signals exactly the process this script started.
   pid=$(
-    nohup env $SERVE_ENVS "$BIN" serve "$MODEL" --speed-up "$RANK0_SETTINGS" --port "$PORT0" \
-      --context "$CONTEXT" --keep-warm "$KEEP_WARM" --parallel 1 --no-update-check $SERVE_FLAGS >"$LOG0" 2>&1 &
+    ( exec nohup env $SERVE_ENVS "$BIN" serve "$MODEL" --speed-up "$RANK0_SETTINGS" --port "$PORT0" \
+        --context "$CONTEXT" --keep-warm "$KEEP_WARM" --parallel 1 --no-update-check $SERVE_FLAGS >"$LOG0" 2>&1 ) &
     echo $!
   )
-  echo "$pid" >"$PID0"
+  echo "$pid $BIN" >"$PID0"
   say "rank 0 pid $(local_pid)"
 }
 
@@ -179,42 +191,81 @@ up() {
 
 # A stop is TERM, then KILL if the rank is still there: a draining rank exits in a second, and a wedged one must not
 # hold a restart. kill() returns 0 for a process that is still shutting down, so each stop waits the pid out first.
+# The pidfile can outlive its rank, so the recorded binary is checked first: a pid the kernel has reused is not ours
+# and is never signalled.
 stop_local() {
-  kill "$1" 2>/dev/null || return 0
-  i=0
-  while kill -0 "$1" 2>/dev/null && [ "$i" -lt $((STOP_WAIT * 5)) ]; do sleep 0.2; i=$((i + 1)); done
-  if kill -0 "$1" 2>/dev/null; then
-    say "rank 0 did not stop within ${STOP_WAIT}s: killing it (pid $1)"
-    kill -9 "$1" 2>/dev/null || true
-    i=0
-    while kill -0 "$1" 2>/dev/null && [ "$i" -lt 25 ]; do sleep 0.2; i=$((i + 1)); done
+  pid=$1
+  bin=$2
+  if [ -n "$bin" ]; then
+    cmd=$(ps -ww -p "$pid" -o command= 2>/dev/null) || cmd=
+    if [ -z "$cmd" ]; then
+      say "rank 0 (pid $pid) is no longer running"
+      return 0
+    fi
+    case $cmd in
+      *"$bin"*) ;;
+      *) say "rank 0: pidfile names pid $pid, whose command is not $bin: not signalling it"; return 0 ;;
+    esac
   fi
-  say "stopped rank 0 (pid $1)"
+  kill "$pid" 2>/dev/null || { say "rank 0 (pid $pid) is already gone"; return 0; }
+  i=0
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt $((STOP_WAIT * 5)) ]; do sleep 0.2; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    say "rank 0 did not stop within ${STOP_WAIT}s: killing it (pid $pid)"
+    kill -9 "$pid" 2>/dev/null || true
+    i=0
+    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 25 ]; do sleep 0.2; i=$((i + 1)); done
+  fi
+  say "stopped rank 0 (pid $pid)"
 }
 
-# The peer runs its own stop loop so the pids, the signals and the waits all happen on that Mac, one line per pid.
+# The peer runs its own stop loop so the signals and the waits all happen on that Mac. Only the pid in the pidfile is
+# a candidate, after the recorded binary is checked the same way as rank 0: a stale pidfile or a reused pid means no
+# signal. The pidfile is removed whether or not anything was signalled, so a second stop is a no-op.
 stop_peer() {
-  pattern=$(basename "${PEER_BIN:-tensorfold-native}")
-  peer "for q in \$( { cat '$PID1' 2>/dev/null; pgrep -f '$pattern serve.*--speed-up'; } | sort -u ); do" \
-       "kill \$q 2>/dev/null || continue; i=0;" \
-       "while kill -0 \$q 2>/dev/null && [ \$i -lt $((STOP_WAIT * 5)) ]; do sleep 0.2; i=\$((i + 1)); done;" \
-       "if kill -0 \$q 2>/dev/null; then echo '[pair] rank 1 will not stop: killing it (pid '\$q')';" \
-       "kill -9 \$q 2>/dev/null; sleep 1; fi;" \
-       "echo '[pair] stopped rank 1 (pid '\$q')';" \
-       "done" 2>/dev/null || true
+  q=$(peer_pid)
+  if [ -z "$q" ]; then
+    say "rank 1: no pidfile at $PEER:$PID1 (already stopped or never started)"
+    peer "rm -f '$PID1'" 2>/dev/null || true
+    return 0
+  fi
+  b=$(peer_bin)
+  [ -n "$b" ] || b=$PEER_BIN
+  if [ -n "$b" ]; then
+    cmd=$(peer "ps -ww -p '$q' -o command= 2>/dev/null" 2>/dev/null || true)
+    if [ -z "$cmd" ]; then
+      say "rank 1 (pid $q) is no longer running"
+      peer "rm -f '$PID1'" 2>/dev/null || true
+      return 0
+    fi
+    case $cmd in
+      *"$b"*) ;;
+      *) say "rank 1: pidfile names pid $q, whose command is not $b: not signalling it"
+         peer "rm -f '$PID1'" 2>/dev/null || true
+         return 0 ;;
+    esac
+  fi
+  say "stopping rank 1 on $PEER (pid $q)"
+  peer "kill '$q' 2>/dev/null || { echo '[pair] rank 1 (pid $q) is already gone'; exit 0; };" \
+       "i=0; while kill -0 '$q' 2>/dev/null && [ \$i -lt $((STOP_WAIT * 5)) ]; do sleep 0.2; i=\$((i + 1)); done;" \
+       "if kill -0 '$q' 2>/dev/null; then echo '[pair] rank 1 will not stop: killing it (pid $q)';" \
+       "kill -9 '$q' 2>/dev/null; sleep 1; fi;" \
+       "echo '[pair] stopped rank 1 (pid $q)'" 2>/dev/null || true
+  peer "rm -f '$PID1'" 2>/dev/null || true
 }
 
+# down stops only what this script recorded: the two pidfiles, each checked against the binary written beside the
+# pid. A missing or stale pidfile is reported and forgotten, never followed by a search for likely-looking processes.
 down() {
   need_peer || return 1
   p=$(local_pid)
-  [ -n "$p" ] && stop_local "$p"
-  for q in $(pgrep -f "$(basename "${BIN:-tensorfold-native}") serve.*--speed-up" 2>/dev/null); do
-    [ "$q" = "$p" ] && continue
-    say "stopping a rank 0 the pidfile missed (pid $q)"
-    stop_local "$q"
-  done
-  stop_peer
+  if [ -n "$p" ]; then
+    stop_local "$p" "$(local_bin)"
+  else
+    say "rank 0: no pidfile at $PID0 (already stopped or never started)"
+  fi
   rm -f "$PID0"
+  stop_peer
   return 0
 }
 

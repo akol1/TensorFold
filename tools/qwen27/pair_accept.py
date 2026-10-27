@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Accept a paired TensorFold serve against the checked-in single-host receipts.
 
-run   send every oracle case twice; both replies must be identical, and either the oracle's token_sha or the
-      case's recorded pair_known one
+run   send every oracle case twice; both replies must be identical, and their token_sha must equal the oracle's
 warm  one chat turn, then that conversation's next turn: the reply must report cached prompt tokens
 
 The oracle (qwen38_27b_oracle.json, next to this file) is the single-Mac, undrafted, temperature-0 record.
 A pair passes when the same token ids come out, so neither Mac's rank count nor the seam can show up in the text.
-Where a case records pair_known, the pair is accepted at that one value and a third value fails: the pair's
-seam sums can decide between two candidates closer together than a bf16 logit step.
+Every case is compared to its oracle token_sha and must match: no case is exempt, because accepting a known
+different value would hide exactly the pair-only divergence this run exists to catch.
 """
 import argparse
 import json
@@ -65,8 +64,9 @@ def run(base, oracle, model, repeat, timeout, only):
     if not cases:
         print("pair_accept: no case matches --only", file=sys.stderr)
         return 2
+    if only is not None:
+        print("pair_accept: running {} of {} cases; --only is a subset, not a full acceptance".format(len(cases), len(oracle["cases"])))
     failures = 0
-    recorded = 0
     for case in cases:
         body = request_body(case, model)
         shas = []
@@ -76,23 +76,17 @@ def run(base, oracle, model, repeat, timeout, only):
             shas.append(token_sha(reply))
             texts.append(reply_text(reply, case["endpoint"]))
         same = len(set(shas)) == 1 and len(set(texts)) == 1
-        known = (case.get("pair_known") or {}).get("token_sha")
         if same and shas[0] == case["token_sha"]:
             print("PASS {} token_sha={} ({} identical runs)".format(case["name"], shas[0], repeat))
-        elif same and known is not None and shas[0] == known:
-            recorded += 1
-            print("KNOWN {} token_sha={} is the pair value recorded for this case, not the oracle's {}".format(case["name"], shas[0], case["token_sha"]))
         else:
             failures += 1
             if not same:
                 why = "the {} runs differ".format(repeat)
-            elif known is None:
-                why = "token_sha {} != oracle {}".format(shas[0], case["token_sha"])
             else:
-                why = "token_sha {} is neither the oracle's {} nor the recorded pair value {}".format(shas[0], case["token_sha"], known)
+                why = "token_sha {} != oracle {}".format(shas[0], case["token_sha"])
             print("FAIL {} {} shas={}".format(case["name"], why, ",".join(str(s) for s in shas)))
     total = len(cases)
-    print("pair_accept: {}/{} cases match the oracle, {} recorded as different, {} unexpected on {}".format(total - failures - recorded, total, recorded, failures, base))
+    print("pair_accept: {}/{} cases match the oracle on {}; {} did not".format(total - failures, total, base, failures))
     return 0 if failures == 0 else 1
 
 

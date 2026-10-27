@@ -38,11 +38,7 @@
       "thinking": false,
       "prompt": "Explain how matrix multiplication uses a GPU in plain English, then give a small numerical example.",
       "max_tokens": 256,
-      "token_sha": "a06fab348fbe",
-      "pair_known": {
-        "token_sha": "58daf9743077",
-        "why": "token 236: the single host takes id 17077 with a 0.125 logit lead over 369; the pair's split sum makes the two logits equal, so the lower id wins and the reply parts there. docs/known-issues.md records the bound."
-      }
+      "token_sha": "a06fab348fbe"
     }
   ]
 }

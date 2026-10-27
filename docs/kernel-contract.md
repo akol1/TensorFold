@@ -131,9 +131,9 @@ Metal: softmax, RMS norm, bf16 top-k, the row projection (3, 4, 6 and 8 bits), a
 into a seam) and simd_qmm_bits (3, 6 and 8 bits), and the lane projection (6-bit groups of 32 on every chip; 4- and
 8-bit formats on the M5's tensor units, where its reg kernel must equal the cooperative one bit for bit), and
 tile_qmm's prompt tiles and their decode twin (4, 6 and 8 bits; the twin bit-equal to the tiles), and the TP seam's
-four exchange kernels (`pair_add_rms`, `pair_sum`, `pair_argmax` and `pair_pick`; the input is one rank's own part
-plus the peer's bytes, so an exchange is a function of those bytes alone, `pair_sum`'s fp32 parts meet in the
-frame's one bf16 rounding, and `pair_argmax` and `pair_pick` state their own NaN and tie rules). Gate 5 also holds
+four exchange kernels (`pair_add_rms`, `pair_argmax` and `pair_pick`; the input is one rank's own part plus the
+peer's bytes, so an exchange is a function of those bytes alone, and `pair_argmax` and `pair_pick` state their own NaN
+and tie rules). Gate 5 also holds
 the rest of tile_qmm's pipelines and GLM-5.3-Flash's hc_expand_10.
 CUDA: the RMS norm rows (16-byte form and the fp32-out tree), the bf16 residual's norm tails (MLX's rounded rows and
 the once-rounded ones, each checked on its residual and its output, with four controls each dropping a rounding point), Nemotron's router logits (and their 128-row tiles,

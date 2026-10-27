@@ -98,28 +98,22 @@ so beyond `--parallel` and the settings file each command is what that Mac runs 
 Each rank runs every layer and splits the even widths: 12 of the 24 attention heads, 2 of the 4 key/value heads,
 half of the linear attention's heads and value channels, 8,704 of the 17,408-wide MLP, and 124,160 of the untied
 lm_head's 248,320 rows.
-A layer then sums two 5120-wide partials over the link, one from its attention or linear attention output projection
-and one from its MLP's down projection, so a prompt block of up to 128 rows makes two exchanges a layer.
+Each projection's output rows are computed on the rank that owns them, with the full-K reduction a single Mac uses:
+no cross-rank partial sum exists, and a seam's all-gathers carry bf16 input activations and output halves
+bit-exactly, so the pair needs no tie policy.
 Embeddings and norms stay whole on both Macs, so the 248,320-row table is not split and a token id means the same
 thing on both ranks.
-At each decided token, each rank takes the argmax of its own 124,160 logits and the pair keeps the better of the two,
-the lower id on a tie.
+At each decided token the pair takes the argmax of the 248,320-row logits gathered from the two output halves,
+exactly as one Mac does.
 
 The pair refuses what needs one Mac's whole state rather than quietly serving without it: `--drafter`, because rank 1
 has no drafter checkpoint, and `--prompt-cache-gib` and `--learn`, because each Mac holds only its own halves of a
 slot's state.
 A pair therefore keeps no prompt cache, learns nothing and drafts nothing.
-A request that samples or carries a grammar fails too, since a round's token comes from that argmax and not from the
-two halves' logits.
+A request that samples or carries a grammar fails too, since a pair serves one greedy stream.
 
-Pair replies are bit-identical to one Mac's on three of the four runs the acceptance oracle ships: a code prompt at 128
-and at 256 tokens and a chat prompt at 128 tokens.
-The fourth, the chat prompt at 256 tokens, parts from the single Mac at token 236: there one Mac picks id `17077` with a
-0.125 logit lead over `369`, and on the pair the two halves' sums round to the same logit for both, so the lower id `369`
-wins and the reply differs from there.
-The `n4-hi` raw-id case is the same class, ids `124160` through `124163` in four rows, where the last of eight tokens is
-`135917` on the pair and `98135` on one Mac.
-[Known issues](../known-issues.md) records that boundary and how a difference there is accepted.
+A pair reply is a single Mac's reply token for token. The pair-vs-single gate is `tp_check` (`tf-qwen27-tp-check`):
+it returns `error.PairTokensDifferFromSingleMac` on any difference, with no exemptions.
 
 ## Weights other than 4-bit
 

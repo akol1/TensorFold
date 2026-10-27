@@ -95,17 +95,17 @@ pub fn spec(w: Which) c.Spec {
             },
             .sums = .{ .f16 = 0, .bf16 = 0, .exact = false, .why = add_why },
         },
-        // One spec for both moves; a gather's `n` is its frame row stride, so the second shape is seam A's 17,408 row.
+        // One spec for both moves; a gather's `n` is its frame row stride, and the 17,408 shape is seam B's.
         .stage, .gather => .{
             .name = name(w),
             .accum = .none,
             .depth = noSums,
             .out = .bf16,
             .tiles = .{ .{}, .{}, .{ .size = 256, .step = 256, .min = 256 } },
-            .served = if (w == .stage)
-                &.{.{ .rows = 8, .n = 5120, .k = 5120 }}
-            else
-                &.{ .{ .rows = 8, .n = 10240, .k = 5120 }, .{ .rows = 8, .n = 10496, .k = 5120 } },
+            .served = if (w == .stage) &.{.{ .rows = 8, .n = 5120, .k = 5120 }} else &.{
+                .{ .rows = 8, .n = 10240, .k = 5120 }, .{ .rows = 8, .n = 17408, .k = 8704 },
+                .{ .rows = 8, .n = 10496, .k = 5120 },
+            },
             .sums = .{ .f16 = 0, .bf16 = 0, .exact = false, .why = move_why },
         },
         .argmax => .{
@@ -319,7 +319,7 @@ pub const Pair = struct {
                     self.mine = try self.rig.input(std.mem.sliceAsBytes(mine));
                     self.out = try self.rig.output(n * 2);
                 } else {
-                    // A frame row holds both halves, so its stride is at least 2*width; a wider `n` is seam A's field.
+                    // A frame row holds both halves, so its stride is at least 2*width: `n` sets a wider one.
                     self.stride = if (shape.n > 2 * shape.k) shape.n else 2 * shape.k;
                     self.mh = mine;
                     const peer = try self.payload(n, fill, rng);

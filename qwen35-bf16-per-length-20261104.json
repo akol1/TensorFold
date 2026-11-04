@@ -1,0 +1,41 @@
+{
+  "member_sha256": "c74bf35fe853db156040122c9cb82ddbe1a39e3ece6e86bc73583772179c15b2",
+  "median_definition": "statistics.median over all scored positions of the length",
+  "rule": "max(abs(served-FP32)) <= max(abs(BF16-FP32)) at the same length; no extra allowance",
+  "rows": [
+    {
+      "prompt_ids": 32,
+      "scored_rows": 31,
+      "worst_served_minus_fp32": 0.04150962829589844,
+      "median_served_minus_fp32": 0.004390716552734375,
+      "worst_bf16_minus_fp32_same_length": 0.02388763427734375,
+      "per_length_worst_within_measured_bf16_distance": false
+    },
+    {
+      "prompt_ids": 129,
+      "scored_rows": 128,
+      "worst_served_minus_fp32": 0.04362297058105469,
+      "median_served_minus_fp32": 3.4332275390625e-05,
+      "worst_bf16_minus_fp32_same_length": 0.04261589050292969,
+      "per_length_worst_within_measured_bf16_distance": false
+    },
+    {
+      "prompt_ids": 257,
+      "scored_rows": 256,
+      "worst_served_minus_fp32": 5.546443939208984,
+      "median_served_minus_fp32": 0.0015401840209960938,
+      "worst_bf16_minus_fp32_same_length": 5.2248382568359375,
+      "per_length_worst_within_measured_bf16_distance": false
+    },
+    {
+      "prompt_ids": 4097,
+      "scored_rows": 4096,
+      "worst_served_minus_fp32": 0.04362297058105469,
+      "median_served_minus_fp32": 1.9073486328125e-06,
+      "worst_bf16_minus_fp32_same_length": 0.04261589050292969,
+      "per_length_worst_within_measured_bf16_distance": false
+    }
+  ],
+  "scored_rows": 4511,
+  "per_length_rule_all_passed": false
+}

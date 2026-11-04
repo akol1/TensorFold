@@ -15,6 +15,12 @@ Complete CUDA: **559 kernels pass gates 1-4, zero fail; 367/367 controls red as 
 Served API and same-weight FP64 checks pass. The direct HTTP-versus-Transformers experiment covers all 4511 scored positions, but strict distances fail in both directions. No wider bound replaces those failures.
 The format remains an experimental functional text/scoring contribution; model equivalence, production and performance qualification are not claimed. BF16 prefill/concurrency remain slow. Other physical chips/backends and multiple ranks remain unqualified.
 
+## Per-length comparison supplement
+
+`qwen35-bf16-per-length-20261104.json` reports worst and median absolute served-minus-FP32 error over every scored position of each prompt length, alongside that length's own worst BF16-minus-FP32 error. The simple per-length worst-error rule fails at all four lengths. The stricter row-level diagnostics remain in the complete payload.
+
+Run `python3 summarize-qwen35-served-reference.py qualified/served-reference.json` after unpacking the current archive to reproduce the supplement. It is derived from the exact checksum-pinned published member; no extra allowance is added.
+
 ## Preserved history
 
 `qwen35-historical-receipts-20261104.tar.gz` preserves all 53 original source-tree receipt files before condensing. Historical failures and actual producer identities remain unchanged.
@@ -26,4 +32,4 @@ The current 387-file payload, identifying JSON fields, full logs, numeric-captur
 Private infrastructure identifiers, user paths, contacts, credentials and application-specific objectives are excluded. Generated prose samples are omitted and client interval origins normalized; durations, rates, fingerprints and numerical failures are retained. Generic container mounts and public software/hardware identities remain.
 Archive owner/group names are empty and IDs/timestamps zero. Every extracted member is hash-verified. This review covers the submitted publication; earlier cached copies outside it have their own scope.
 
-`SHA256SUMS` pins all six files. PR #2020 retains summary receipts and reproduction commands, with immutable links to these files.
+`SHA256SUMS` pins all eight files. PR #2020 retains summary receipts and reproduction commands, with immutable links to these files.

@@ -1,0 +1,37 @@
+[02:05:05] fixtures: [1, 32, 129, 257, 4097]
+[02:05:05] served continuations: {0: [20139, 279, 6463, 1881, 279, 2972, 27803, 4574], 1: [13, 271, 248068, 271, 248069, 271, 6479, 44896], 2: [11, 220, 16, 198, 262, 364, 696, 303], 3: [1204, 5979, 44896, 5533, 264, 21966, 13, 357], 4: [1393, 1590, 198, 262, 264, 11, 292, 283]}
+[02:05:05] captures with binaries: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]
+[02:05:05] logprob captures: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] ; projection captures: [15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]
+[02:05:05] env: torch 2.15.0+cu132 (cuda 13.2, available False) transformers 5.22.1 accelerate 1.15.0
+[02:05:27] checkpoint revision: fc05daec18b0a78c049392ed2e771dde82bdf654 (model_dir/.cache/huggingface/trees/<revision>.json), 11 shards, 55.6 GB
+[02:05:27] loading /qual/models/qwen35-bf16 (CPU, bfloat16, low_cpu_mem_usage=True)
+Loading weights:   0%|          | 0/1184 [00:00<?, ?it/s]Loading weights: 100%|██████████| 1184/1184 [00:00<00:00, 27533.98it/s]
+[02:05:28] loaded: Qwen3_5ForConditionalGeneration dtype torch.bfloat16, 27356728560 params, peak rss 0.9 GB
+[02:05:28] fixtures involved in native comparison (candidates): [1, 2, 3]
+[02:05:28] fixture 0: prompt length 1, forward length 6 (prompt + 5 served continuation tokens)
+[transformers] `causal_conv1d_fn` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.
+[transformers] `chunk_gated_delta_rule` is falling back to its reference PyTorch implementation because `flash-linear-attention` is not installed. This is correct but much slower; install `flash-linear-attention` for the optimized kernel.
+[02:05:42] fixture 0 done: 0 rows bf16, 0 rows fp32, max|delta| None
+[02:05:42] wrote /work/transformers-prompt-scores.json (0.0 MB)
+[02:05:42] fixture 1: prompt length 32, forward length 37 (prompt + 5 served continuation tokens)
+[02:05:56] fixture 1 done: 31 rows bf16, 31 rows fp32, max|delta| 0.05769538879394531
+[02:05:56] wrote /work/transformers-prompt-scores.json (0.1 MB)
+[02:05:56] fixture 2: prompt length 129, forward length 134 (prompt + 5 served continuation tokens)
+[02:06:17] fixture 2 done: 128 rows bf16, 128 rows fp32, max|delta| 0.02800464630126953
+[02:06:17] wrote /work/transformers-prompt-scores.json (0.4 MB)
+[02:06:17] fixture 3: prompt length 257, forward length 262 (prompt + 5 served continuation tokens)
+[02:06:46] fixture 3 done: 256 rows bf16, 256 rows fp32, max|delta| 4.035365104675293
+[02:06:46] wrote /work/transformers-prompt-scores.json (1.0 MB)
+[02:06:46] fixture 4: prompt length 4097, forward length 4102 (prompt + 5 served continuation tokens)
+[02:08:19] fixture 4: FP32 arm skipped by policy
+[02:08:19] fixture 4 done: 4096 rows bf16, 0 rows fp32, max|delta| None
+[02:08:19] wrote /work/transformers-prompt-scores.json (5.3 MB)
+[02:08:19] A headline: {"fixtures_reported": [0, 1, 2, 3, 4], "fixture_lengths": [1, 32, 129, 257, 4097], "fixtures_with_both_arms": [0, 1, 2, 3], "fixtures_fp32_skipped": [4], "rows_compared": 415, "max_abs_logprob_delta_bf16_vs_fp32": 4.035365104675293, "mean_abs_logprob_delta_bf16_vs_fp32": 0.06121566381799169, "max_abs_logit_delta_bf16_vs_fp32": 9.028594970703125, "max_abs_lse_delta_bf16_vs_fp32": 6.962703704833984, "argmax_agreement_rows": 408, "rank_agreement_rows": 388}
+[02:08:19] wrote /work/transformers-prompt-scores.json (5.3 MB)
+[02:08:41] native comparison rows: 18 (prompt 6, decode 12)
+[02:08:49] B rows: 18 (prompt 6, decode 12); max |native - tf_bf16| = 0.830456
+[02:08:49] B rigorous bound holds: True, max ratio 0.169451, max bound 15.8293
+[02:08:49] B measured bf16-vs-fp32 delta: max 1.55099, within own bound: True (max ratio 1.55199)
+[02:08:49] wrote /work/transformers-prompt-scores.json (5.4 MB)
+[02:08:49] wrote /work/transformers-prompt-scores.json (5.4 MB)
+[02:08:49] done in 224.3 s, peak rss 53.0 GB

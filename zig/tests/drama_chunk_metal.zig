@@ -4,6 +4,10 @@ const d = @import("drama3");
 const C = d.config;
 const E = d.Engine;
 const W = C.frame_width;
+const isolation = @import("drama_isolation_metal.zig");
+test {
+    _ = isolation;
+}
 
 fn firstDifference(a: []const u8, b: []const u8) ?usize {
     for (a, b, 0..) |x, y, i| if (x != y) return i;
@@ -18,14 +22,14 @@ test "live byte comparator detects mutation and excludes unwritten tails" {
     try std.testing.expectEqual(@as(?usize, 1), firstDifference(a[0..3], b[0..3]));
 }
 
-const Compare = struct {
+pub const Compare = struct {
     a: *E,
     b: *E,
     buffers: usize = 0,
     bytes: usize = 0,
     seam: usize = 0,
 
-    fn range(c: *Compare, name: []const u8, layer: usize, pa: u64, pb: u64, n: usize) !void {
+    pub fn range(c: *Compare, name: []const u8, layer: usize, pa: u64, pb: u64, n: usize) !void {
         if (n == 0) return;
         const a = try c.a.gpa.alloc(u8, n);
         defer c.a.gpa.free(a);
@@ -41,7 +45,7 @@ const Compare = struct {
         }
     }
 
-    fn live(c: *Compare, total: usize) !void {
+    pub fn live(c: *Compare, total: usize) !void {
         try c.a.flush();
         try c.b.flush();
         const stride = C.kv_heads * C.head_dim * 2;
@@ -55,7 +59,7 @@ const Compare = struct {
         }
     }
 
-    fn final(c: *Compare) !void {
+    pub fn final(c: *Compare) !void {
         try c.a.flush();
         try c.b.flush();
         inline for (.{ .{ "hlast", C.hidden * 2 }, .{ "cur_input", W * 4 }, .{ "window", 16 * 4 }, .{ "pos", 4 }, .{ "step", 8 }, .{ "count", 4 } }) |item|
@@ -308,6 +312,8 @@ pub fn main(init: std.process.Init) !void {
     var model: ?[]const u8 = null;
     var path: ?[]const u8 = null;
     var forced_path: ?[]const u8 = null;
+    var other_path: ?[]const u8 = null;
+    var other_forced_path: ?[]const u8 = null;
     var poison_kv = false;
     var resume_cut: ?usize = null;
     var chunk: usize = 0;
@@ -323,6 +329,10 @@ pub fn main(init: std.process.Init) !void {
             path = value;
         } else if (std.mem.eql(u8, key, "--forced-rows")) {
             forced_path = value;
+        } else if (std.mem.eql(u8, key, "--other-rows")) {
+            other_path = value;
+        } else if (std.mem.eql(u8, key, "--other-forced-rows")) {
+            other_forced_path = value;
         } else if (std.mem.eql(u8, key, "--poison-kv")) {
             if (!std.mem.eql(u8, value, "1")) return error.BadPoisonKv;
             poison_kv = true;
@@ -334,9 +344,11 @@ pub fn main(init: std.process.Init) !void {
             context = try std.fmt.parseInt(usize, value, 10);
         } else return error.UnknownArgument;
     }
+    if ((other_path == null) != (other_forced_path == null) or (other_path != null and forced_path == null)) return error.IsolationRequiresBothHistories;
     if (poison_kv and forced_path == null) return error.PoisonKvRequiresForcedRows;
     if (model == null or path == null) return error.ModelAndRowsRequired;
     if (context < 1025 or context > 8192) return error.BadContext;
+    if (other_path != null) try isolation.validateChunk(chunk);
     var opts: d.Options = .{ .max_ctx = context, .max_rows = chunk, .attn_chunk = @min(chunk, 1024), .max_frames = 1, .warmup = false };
     try opts.validatePrefill();
     const raw = try std.Io.Dir.cwd().readFileAlloc(init.io, path.?, a, .limited(8192 * W * 4));
@@ -367,6 +379,16 @@ pub fn main(init: std.process.Init) !void {
         for (forced) |row| if (row[0] < config.ids.sem_begin or row[0] > config.ids.sem_end)
             return error.ForcedAcousticRowRequired;
     }
+    var other: ?isolation.History = null;
+    if (other_path) |p| {
+        other = .{ .rows = try isolation.readRows(a, init.io, p), .forced = try isolation.readRows(a, init.io, other_forced_path.?) };
+        const first: isolation.History = .{ .rows = rows, .forced = forced };
+        try isolation.validate(a, first, config.ids, context);
+        try isolation.validate(a, other.?, config.ids, context);
+        try isolation.distinct(first, other.?);
+        opts.max_frames = @max(forced.len, other.?.forced.len) + 1;
+        try d.load_limit.admitStates(a, init.io, model.?, @intCast(context), 4);
+    }
     const base = try E.create(std.heap.page_allocator, init.io, model.?, opts);
     defer base.destroy();
     const candidate = try base.fork();
@@ -393,5 +415,6 @@ pub fn main(init: std.process.Init) !void {
         var seam: Compare = .{ .a = base, .b = candidate };
         try forcedSeam(&seam, rows, forced, chunk, poison_kv);
     }
+    if (other) |second| try isolation.run(Compare, base, candidate, .{ .rows = rows, .forced = forced }, second, chunk);
     std.debug.print("PASS chunk-state rows={d} context={d} reference_chunk=1 candidate_chunk={d} buffers={d} bytes={d}; no decode, audio or independent fidelity qualification\n", .{ n, context, chunk, compare.buffers, compare.bytes });
 }

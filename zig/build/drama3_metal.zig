@@ -76,6 +76,16 @@ pub fn targets(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
         }),
     });
     b.step("drama3-metal-quant-check", "Build the NVFP4 Metal operator checker; does not execute GPU work").dependOn(&b.addInstallArtifact(quant_check, .{}).step);
+    const chunk_module = b.createModule(.{
+        .root_source_file = b.path("zig/tests/drama_chunk_metal.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "drama3", .module = family }},
+    });
+    const chunk_check = b.addExecutable(.{ .name = "drama3-metal-chunk-check", .root_module = chunk_module });
+    b.step("drama3-metal-chunk-check", "Build the exact Metal prompt chunk checker without running it").dependOn(&b.addInstallArtifact(chunk_check, .{}).step);
+    b.step("test-drama-metal-chunk-host", "Test the chunk comparator without GPU execution").dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = chunk_module, .filters = &.{"live byte comparator"} })).step);
     const tool = b.createModule(.{
         .root_source_file = b.path("zig/src/families/drama3/generate.zig"),
         .target = target,

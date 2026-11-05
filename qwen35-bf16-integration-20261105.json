@@ -124,11 +124,12 @@
   },
   "host_log": {
     "file": "qwen35-bf16-integration-host-20261105.log",
-    "bytes": 111781,
-    "sha256": "a638705a7ee71efda36545826215289d295b20a9f9b2c397362a671512cb7db2"
+    "bytes": 111780,
+    "sha256": "4afc89db56ee6f07aef025b0657929c561bbbccc4b90110ecd0930b21a69f5d5"
   },
   "publication_transforms": [
-    "Host log normalizes checkout and user prefixes; diagnostics, exits and numeric results are unchanged."
+    "Host log normalizes checkout and user prefixes; diagnostics, exits and numeric results are unchanged.",
+    "Final empty log lines normalized; no diagnostic lines omitted."
   ],
   "stage_limits": [
     "This is a host/source-identity supplement, not a new device execution.",

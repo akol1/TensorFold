@@ -1,0 +1,2054 @@
+test-kernel-contract
++- run test w
+N/A  dense gemm dense_gemm_block<DotBF16, 8> on gfx1030: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Small> on gfx1030: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Small> on gfx1100: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Small> on gfx1151: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Big> on gfx1030: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Big> on gfx1100: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Big> on gfx1151: not served there
+failed command: ./.zig-cache/o/6dee0820e9a1fa26bcb77805dada0189/test --cache-dir=./.zig-cache --seed=0x19b123 --listen=-
+
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+KNOWN-DIFFER tools/two_tools-stream
+  reply 0 body differs at 313: golden [content": "\n"}, "finish_reason": null}]}
+
+data: {"id": "<id] zig [tool_calls": [{"index": 0, "id": "<id2>", "type": "function"]
+KNOWN-DIFFER tools/two_tools-single-stream
+  reply 0 body differs at 313: golden [content": "\n"}, "finish_reason": null}]}
+
+data: {"id": "<id] zig [tool_calls": [{"index": 0, "id": "<id2>", "type": "function"]
+KNOWN-DIFFER tools/choice-"required"
+  reply 0 status: golden HTTP/1.1 200 OK, zig HTTP/1.1 400 Bad Request
+  reply 0 body differs at 2: golden [id": "<id1>", "object": "chat.completion", "created": <ts>, ] zig [error": {"message": "backend 'lanes' cannot enforce tool_cho]
+  reply 0 headers differ
+KNOWN-DIFFER tools/choice-{"type": "function", "function": {"name": "lookup"}}
+  reply 0 status: golden HTTP/1.1 200 OK, zig HTTP/1.1 400 Bad Request
+  reply 0 body differs at 2: golden [id": "<id1>", "object": "chat.completion", "created": <ts>, ] zig [error": {"message": "backend 'lanes' cannot enforce tool_cho]
+  reply 0 headers differ
+KNOWN-DIFFER errors/format-json
+  reply 0 body differs at 41: golden [needs the checkpoint's config.json vocab_size", "type": "inv] zig [(response_format and the guided_* fields) is not supported b]
+  reply 0 headers differ
+KNOWN-DIFFER errors/stream-structured
+  connection after: golden closed, zig open
+  reply 0 status: golden HTTP/1.1 200 OK, zig HTTP/1.1 400 Bad Request
+  reply 0 body differs at 0: golden [data: {"id": "<id1>", "object": "chat.completion.chunk", "cr] zig [{"error": {"message": "structured output (response_format an]
+KNOWN-DIFFER anthropic/tool-use-stream
+  reply 0 body differs at 704: golden [\n"}}
+
+event: content_block_stop
+data: {"type": "content_blo] zig ["}}
+
+event: content_block_stop
+data: {"type": "content_block]
+KNOWN-DIFFER anthropic/tool-result
+  reply 0 status: golden HTTP/1.1 200 OK, zig HTTP/1.1 400 Bad Request
+  reply 0 body differs at 2: golden [id": "<id1>", "type": "message", "role": "assistant", "model] zig [type": "error", "error": {"type": "invalid_request_error", "]
+  reply 0 headers differ
+KNOWN-DIFFER anthropic/refuse-format
+  reply 0 body differs at 91: golden [needs the checkpoint's config.json vocab_size"}}] zig [(response_format and the guided_* fields) is not supported b]
+  reply 0 headers differ
+KNOWN-DIFFER cancel/metrics-after
+  reply 0 body differs at 307: golden [prompt_tokens_total Prompt tokens of finished requests.
+# TY] zig [generation_tokens_running Generated tokens held by live stre]
+KNOWN-DIFFER metrics-open/metrics
+  reply 0 body differs at 307: golden [prompt_tokens_total Prompt tokens of finished requests.
+# TY] zig [generation_tokens_running Generated tokens held by live stre]
+KNOWN-DIFFER metrics-open/v1-metrics
+  reply 0 body differs at 487: golden [prompt_tokens_total Prompt tokens of finished requests.
+# TY] zig [generation_tokens_running Generated tokens held by live stre]
+KNOWN-DIFFER keys/metrics-counted
+  reply 0 body differs at 887: golden [prompt_tokens_total Prompt tokens of finished requests.
+# TY] zig [generation_tokens_running Generated tokens held by live stre]
+        chat   16 equal    0 differ   0 known
+    thinking   16 equal    0 differ   0 known
+       stops   13 equal    0 differ   0 known
+       usage   10 equal    0 differ   0 known
+       tools   64 equal    0 differ   4 known
+      errors   37 equal    0 differ   2 known
+ completions   15 equal    0 differ   0 known
+   responses   29 equal    0 differ   0 known
+   anthropic   26 equal    0 differ   3 known
+      tokens   19 equal    0 differ   0 known
+      status   11 equal    0 differ   0 known
+     framing   42 equal    0 differ   0 known
+      cancel    1 equal    0 differ   1 known
+   lifecycle    2 equal    0 differ   0 known
+metrics-open    2 equal    0 differ   2 known
+        keys   19 equal    0 differ   1 known
+322/335 equal to server goldens, 0 unexpected differences
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+warning: libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+        keys    6 equal    0 differ   0 known
+      origin   34 equal    0 differ   0 known
+      scopes   13 equal    0 differ   0 known
+   admission    2 equal    0 differ   0 known
+55/55 equal to server goldens, 0 unexpected differences
+test
++- test-cuda-host
+   +- run test w
+Dory sliding (theta 1e4, head dim 256)
+   i  old                         new                         ulps
+   0  0x3f800000 1e0               0x3f800000 1e0                0
+   1  0x3f6e39f8 9.3057203e-1      0x3f6e39f8 9.3057203e-1       0
+   2  0x3f5dafd7 8.6596435e-1      0x3f5dafd7 8.6596435e-1       0
+   3  0x3f4e4bad 8.058422e-1       0x3f4e4bad 8.058422e-1        0
+   4  0x3f3ff912 7.4989426e-1      0x3f3ff911 7.498942e-1       -1
+   5  0x3f32a506 6.9783056e-1      0x3f32a506 6.9783056e-1       0
+   6  0x3f263de0 6.4938164e-1      0x3f263de0 6.4938164e-1       0
+   7  0x3f1ab32b 6.042964e-1       0x3f1ab32b 6.042964e-1        0
+   8  0x3f0ff59a 5.6234133e-1      0x3f0ff59a 5.6234133e-1       0
+   9  0x3f05f6ee 5.232991e-1       0x3f05f6ef 5.2329916e-1      +1
+  10  0x3ef953cd 4.8696747e-1      0x3ef953cf 4.8696753e-1      +2
+  11  0x3ee8045f 4.5315835e-1      0x3ee8045f 4.5315835e-1       0
+  12  0x3ed7e89b 4.216965e-1       0x3ed7e89b 4.216965e-1        0
+  13  0x3ec8eb23 3.9241895e-1      0x3ec8eb24 3.9241898e-1      +1
+  14  0x3ebaf81b 3.6517414e-1      0x3ebaf81b 3.6517414e-1       0
+  15  0x3eadfcff 3.3982083e-1      0x3eadfcff 3.3982083e-1       0
+  16  0x3ea1e89b 3.1622776e-1      0x3ea1e89b 3.1622776e-1       0
+  17  0x3e96aaea 2.9427272e-1      0x3e96aaea 2.9427272e-1       0
+  18  0x3e8c3503 2.7384195e-1      0x3e8c3504 2.7384198e-1      +1
+  19  0x3e827908 2.5482965e-1      0x3e827909 2.5482967e-1      +1
+  20  0x3e72d423 2.3713736e-1      0x3e72d423 2.3713736e-1       0
+  21  0x3e61f835 2.206734e-1       0x3e61f835 2.206734e-1        0
+  22  0x3e5247ed 2.053525e-1       0x3e5247ed 2.053525e-1        0
+  23  0x3e43ae7c 1.910953e-1       0x3e43ae7c 1.910953e-1        0
+  24  0x3e361887 1.7782794e-1      0x3e361887 1.7782794e-1       0
+  25  0x3e297409 1.654817e-1       0x3e297409 1.654817e-1        0
+  26  0x3e1db03f 1.5399264e-1      0x3e1db040 1.5399265e-1      +1
+  27  0x3e12bd90 1.4330125e-1      0x3e12bd91 1.4330126e-1      +1
+  28  0x3e088d77 1.3335215e-1      0x3e088d77 1.3335215e-1       0
+  29  0x3dfe24de 1.24093756e-1     0x3dfe24e0 1.2409377e-1      +2
+  30  0x3dec7fd6 1.154782e-1       0x3dec7fd6 1.154782e-1        0
+  31  0x3ddc1465 1.07460774e-1     0x3ddc1466 1.0746078e-1      +1
+  32  0x3dcccccd 1e-1              0x3dcccccd 1e-1               0
+  33  0x3dbe94c7 9.305721e-2       0x3dbe94c6 9.30572e-2        -1
+  34  0x3db15977 8.659642e-2       0x3db15978 8.659643e-2       +1
+  35  0x3da50957 8.058422e-2       0x3da50956 8.058421e-2       -1
+  36  0x3d99940d 7.4989416e-2      0x3d99940d 7.4989416e-2       0
+  37  0x3d8eea6b 6.9783054e-2      0x3d8eea6b 6.9783054e-2       0
+  38  0x3d84fe4c 6.493816e-2       0x3d84fe4d 6.4938165e-2      +1
+  39  0x3d778511 6.0429636e-2      0x3d778513 6.0429644e-2      +2
+  40  0x3d6655c1 5.6234125e-2      0x3d6655c2 5.623413e-2       +1
+  41  0x3d5657e2 5.2329905e-2      0x3d5657e4 5.2329913e-2      +2
+  42  0x3d47763f 4.8696753e-2      0x3d47763f 4.8696753e-2       0
+  43  0x3d399d18 4.5315832e-2      0x3d399d19 4.5315836e-2      +1
+  44  0x3d2cba15 4.216965e-2       0x3d2cba15 4.216965e-2        0
+  45  0x3d20bc1b 3.924189e-2       0x3d20bc1d 3.92419e-2        +2
+  46  0x3d159348 3.651741e-2       0x3d159348 3.651741e-2        0
+  47  0x3d0b30cb 3.398208e-2       0x3d0b30cc 3.3982083e-2      +1
+  48  0x3d0186e2 3.1622775e-2      0x3d0186e3 3.162278e-2       +1
+  49  0x3cf11177 2.9427273e-2      0x3cf11177 2.9427273e-2       0
+  50  0x3ce054d2 2.7384195e-2      0x3ce054d2 2.7384195e-2       0
+  51  0x3cd0c1a8 2.5482967e-2      0x3cd0c1a8 2.5482967e-2       0
+  52  0x3cc2434e 2.3713734e-2      0x3cc2434f 2.3713736e-2      +1
+  53  0x3cb4c691 2.206734e-2       0x3cb4c691 2.206734e-2        0
+  54  0x3ca83988 2.0535246e-2      0x3ca8398b 2.0535251e-2      +3
+  55  0x3c9c8b96 1.9109529e-2      0x3c9c8b97 1.910953e-2       +1
+  56  0x3c91ad39 1.7782794e-2      0x3c91ad39 1.7782794e-2       0
+  57  0x3c879009 1.6548174e-2      0x3c879008 1.6548172e-2      -1
+  58  0x3c7c4d2f 1.5399261e-2      0x3c7c4d33 1.5399265e-2      +4
+  59  0x3c6ac8e6 1.43301245e-2     0x3c6ac8e7 1.4330125e-2      +1
+  60  0x3c5a7bf2 1.3335215e-2      0x3c5a7bf2 1.3335215e-2       0
+  61  0x3c4b50b5 1.2409379e-2      0x3c4b50b3 1.2409377e-2      -2
+  62  0x3c3d330f 1.1547818e-2      0x3c3d3311 1.154782e-2       +2
+  63  0x3c301050 1.0746077e-2      0x3c301052 1.0746079e-2      +2
+  64  0x3c23d70a 1e-2              0x3c23d70a 1e-2               0
+  65  0x3c187706 9.305721e-3       0x3c187705 9.30572e-3        -1
+  66  0x3c0de12f 8.659645e-3       0x3c0de12d 8.659643e-3       -2
+  67  0x3c040778 8.058421e-3       0x3c040779 8.058422e-3       +1
+  68  0x3bf5b9b0 7.4989423e-3      0x3bf5b9b0 7.4989423e-3       0
+  69  0x3be4aa48 6.978307e-3       0x3be4aa46 6.978306e-3       -2
+  70  0x3bd4ca16 6.493817e-3       0x3bd4ca15 6.4938166e-3      -1
+  71  0x3bc6040c 6.042963e-3       0x3bc6040f 6.0429643e-3      +3
+  72  0x3bb8449b 5.623413e-3       0x3bb8449c 5.6234132e-3      +1
+  73  0x3bab7983 5.232991e-3       0x3bab7983 5.232991e-3        0
+  74  0x3b9f91cd 4.8696757e-3      0x3b9f91cc 4.8696753e-3      -1
+  75  0x3b947dae 4.5315837e-3      0x3b947dae 4.5315837e-3       0
+  76  0x3b8a2e78 4.2169653e-3      0x3b8a2e77 4.216965e-3       -1
+  77  0x3b80967d 3.9241896e-3      0x3b80967d 3.9241896e-3       0
+  78  0x3b6f520e 3.6517414e-3      0x3b6f520e 3.6517414e-3       0
+  79  0x3b5eb479 3.3982082e-3      0x3b5eb47a 3.3982084e-3      +1
+  80  0x3b4f3e38 3.1622779e-3      0x3b4f3e38 3.1622779e-3       0
+  81  0x3b40dac6 2.9427274e-3      0x3b40dac5 2.9427272e-3      -1
+  82  0x3b337710 2.73842e-3        0x3b33770f 2.7384197e-3      -1
+  83  0x3b270154 2.548297e-3       0x3b270153 2.5482967e-3      -1
+  84  0x3b1b690c 2.3713736e-3      0x3b1b690d 2.3713738e-3      +1
+  85  0x3b109edb 2.2067341e-3      0x3b109edb 2.2067341e-3       0
+  86  0x3b06946e 2.0535248e-3      0x3b06946f 2.053525e-3       +1
+  87  0x3afa78f2 1.9109531e-3      0x3afa78f0 1.9109529e-3      -2
+  88  0x3ae9152a 1.7782797e-3      0x3ae91528 1.7782794e-3      -2
+  89  0x3ad8e673 1.6548171e-3      0x3ad8e673 1.6548171e-3       0
+  90  0x3ac9d75d 1.5399266e-3      0x3ac9d75c 1.5399265e-3      -1
+  91  0x3abbd3eb 1.4330124e-3      0x3abbd3ed 1.4330127e-3      +2
+  92  0x3aaec98f 1.3335216e-3      0x3aaec98e 1.3335214e-3      -1
+  93  0x3aa2a6f6 1.2409377e-3      0x3aa2a6f7 1.2409379e-3      +1
+  94  0x3a975c0e 1.154782e-3       0x3a975c0e 1.154782e-3        0
+  95  0x3a8cd9db 1.0746078e-3      0x3a8cd9db 1.0746078e-3       0
+  96  0x3a83126f 1e-3              0x3a83126f 1e-3               0
+  97  0x3a73f1a4 9.3057216e-4      0x3a73f1a3 9.305721e-4       -1
+  98  0x3a6301e2 8.6596434e-4      0x3a6301e2 8.6596434e-4       0
+  99  0x3a533f29 8.058423e-4       0x3a533f28 8.058422e-4       -1
+ 100  0x3a44948c 7.498942e-4       0x3a44948c 7.498942e-4        0
+ 101  0x3a36ee9f 6.9783063e-4      0x3a36ee9e 6.978306e-4       -1
+ 102  0x3a2a3b44 6.4938166e-4      0x3a2a3b44 6.4938166e-4       0
+ 103  0x3a1e69a5 6.042964e-4       0x3a1e69a5 6.042964e-4        0
+ 104  0x3a136a16 5.623413e-4       0x3a136a16 5.623413e-4        0
+ 105  0x3a092e03 5.2329915e-4      0x3a092e02 5.232991e-4       -1
+ 106  0x39ff4fae 4.8696756e-4      0x39ff4fac 4.869675e-4       -2
+ 107  0x39ed95e2 4.5315834e-4      0x39ed95e2 4.5315834e-4       0
+ 108  0x39dd1727 4.2169655e-4      0x39dd1725 4.216965e-4       -2
+ 109  0x39cdbd97 3.9241902e-4      0x39cdbd96 3.92419e-4        -1
+ 110  0x39bf74d8 3.6517414e-4      0x39bf74d7 3.651741e-4       -1
+ 111  0x39b229fa 3.398208e-4       0x39b229fa 3.398208e-4        0
+ 112  0x39a5cb60 3.162278e-4       0x39a5cb60 3.162278e-4        0
+ 113  0x399a489e 2.9427273e-4      0x399a489e 2.9427273e-4       0
+ 114  0x398f9272 2.7384196e-4      0x398f9272 2.7384196e-4       0
+ 115  0x39859aa9 2.5482968e-4      0x39859aa9 2.5482968e-4       0
+ 116  0x3978a815 2.3713738e-4      0x3978a815 2.3713738e-4       0
+ 117  0x39676490 2.2067339e-4      0x39676492 2.2067342e-4      +2
+ 118  0x395753e6 2.0535252e-4      0x395753e4 2.053525e-4       -2
+ 119  0x394860c1 1.910953e-4       0x394860c1 1.910953e-4        0
+ 120  0x393a7753 1.7782794e-4      0x393a7753 1.7782794e-4       0
+ 121  0x392d8529 1.6548172e-4      0x392d8529 1.6548172e-4       0
+ 122  0x39217916 1.5399265e-4      0x39217916 1.5399265e-4       0
+ 123  0x39164324 1.4330127e-4      0x39164324 1.4330127e-4       0
+ 124  0x390bd472 1.3335215e-4      0x390bd472 1.3335215e-4       0
+ 125  0x39021f2c 1.2409379e-4      0x39021f2b 1.2409377e-4      -1
+ 126  0x38f22ce4 1.1547821e-4      0x38f22ce2 1.1547819e-4      -2
+ 127  0x38e15c91 1.0746078e-4      0x38e15c91 1.0746078e-4       0
+Dory sliding (theta 1e4, head dim 256): 63 of 128 words differ, largest 4 ulp, abs 5.960e-8, rel 2.721e-7
+Dory full (theta 1e7, head dim 256)
+   i  old                         new                         ulps
+   0  0x3f800000 1e0               0x3f800000 1e0                0
+   1  0x3f61b5fc 8.816831e-1       0x3f61b5fc 8.816831e-1        0
+   2  0x3f470165 7.77365e-1        0x3f470165 7.77365e-1         0
+   3  0x3f2f75b1 6.853896e-1       0x3f2f75b1 6.853896e-1        0
+   4  0x3f1ab32b 6.042964e-1       0x3f1ab32b 6.042964e-1        0
+   5  0x3f086572 5.3279793e-1      0x3f086571 5.327979e-1       -1
+   6  0x3ef0843c 4.6975887e-1      0x3ef0843c 4.6975887e-1       0
+   7  0x3ed40f33 4.1417846e-1      0x3ed40f33 4.1417846e-1       0
+   8  0x3ebaf81b 3.6517414e-1      0x3ebaf81b 3.6517414e-1       0
+   9  0x3ea4d8f8 3.2196784e-1      0x3ea4d8f8 3.2196784e-1       0
+  10  0x3e9157e1 2.838736e-1       0x3e9157e1 2.838736e-1        0
+  11  0x3e802590 2.5028658e-1      0x3e80258f 2.5028655e-1      -1
+  12  0x3e61f835 2.206734e-1       0x3e61f835 2.206734e-1        0
+  13  0x3e473bc9 1.94564e-1        0x3e473bca 1.9456401e-1      +1
+  14  0x3e2fa92d 1.7154379e-1      0x3e2fa92d 1.7154379e-1       0
+  15  0x3e1ae091 1.5124728e-1      0x3e1ae090 1.5124726e-1      -1
+  16  0x3e088d77 1.3335215e-1      0x3e088d77 1.3335215e-1       0
+  17  0x3df0cace 1.1757432e-1      0x3df0cace 1.1757432e-1       0
+  18  0x3dd44d6b 1.0366329e-1      0x3dd44d6c 1.03663296e-1     +1
+  19  0x3dbb2ef8 9.139818e-2       0x3dbb2ef7 9.139817e-2       -1
+  20  0x3da50957 8.058422e-2       0x3da50956 8.058421e-2       -1
+  21  0x3d918287 7.104974e-2       0x3d918287 7.104974e-2        0
+  22  0x3d804b2a 6.2643364e-2      0x3d804b29 6.264336e-2       -1
+  23  0x3d623a84 5.5231586e-2      0x3d623a83 5.5231582e-2      -1
+  24  0x3d47763f 4.8696753e-2      0x3d47763f 4.8696753e-2       0
+  25  0x3d2fdcb8 4.2935103e-2      0x3d2fdcb8 4.2935103e-2       0
+  26  0x3d1b0e00 3.785515e-2       0x3d1b0e01 3.7855152e-2      +1
+  27  0x3d08b589 3.337625e-2       0x3d08b588 3.3376247e-2      -1
+  28  0x3cf11177 2.9427273e-2      0x3cf11177 2.9427273e-2       0
+  29  0x3cd48bb6 2.5945526e-2      0x3cd48bb6 2.5945526e-2       0
+  30  0x3cbb65e6 2.2875737e-2      0x3cbb65e3 2.2875732e-2      -3
+  31  0x3ca539c5 2.0169148e-2      0x3ca539c4 2.0169146e-2      -1
+  32  0x3c91ad39 1.7782794e-2      0x3c91ad39 1.7782794e-2       0
+  33  0x3c8070ce 1.567879e-2       0x3c8070ce 1.567879e-2        0
+  34  0x3c627ce5 1.38237225e-2     0x3c627ce5 1.38237225e-2      0
+  35  0x3c47b0c5 1.2188141e-2      0x3c47b0c6 1.2188142e-2      +1
+  36  0x3c301050 1.0746077e-2      0x3c301052 1.0746079e-2      +2
+  37  0x3c1b3b82 9.474637e-3       0x3c1b3b80 9.474635e-3       -2
+  38  0x3c08dda7 8.353627e-3       0x3c08dda5 8.353625e-3       -2
+  39  0x3bf15835 7.3652514e-3      0x3bf15831 7.3652496e-3      -4
+  40  0x3bd4ca15 6.4938166e-3      0x3bd4ca15 6.4938166e-3       0
+  41  0x3bbb9ce0 5.725488e-3       0x3bbb9cdf 5.7254876e-3      -1
+  42  0x3ba56a3e 5.0480654e-3      0x3ba56a3f 5.048066e-3       +1
+  43  0x3b91d7f7 4.450794e-3       0x3b91d7f7 4.450794e-3        0
+  44  0x3b809680 3.924191e-3       0x3b80967d 3.9241896e-3      -3
+  45  0x3b62bf5e 3.4598927e-3      0x3b62bf59 3.4598915e-3      -5
+  46  0x3b47eb60 3.0505285e-3      0x3b47eb5e 3.050528e-3       -2
+  47  0x3b3043fd 2.6895993e-3      0x3b3043fb 2.6895988e-3      -2
+  48  0x3b1b690d 2.3713738e-3      0x3b1b690d 2.3713738e-3       0
+  49  0x3b0905ce 2.0908e-3         0x3b0905ce 2.0908e-3          0
+  50  0x3af19f02 1.8434229e-3      0x3af19f02 1.8434229e-3       0
+  51  0x3ad50883 1.6253147e-3      0x3ad50885 1.6253149e-3      +2
+  52  0x3abbd3ea 1.4330123e-3      0x3abbd3ed 1.4330127e-3      +3
+  53  0x3aa59acb 1.2634633e-3      0x3aa59ac8 1.2634629e-3      -3
+  54  0x3a9202c5 1.1139741e-3      0x3a9202c3 1.1139739e-3      -2
+  55  0x3a80bc3a 9.821721e-4       0x3a80bc38 9.821719e-4       -2
+  56  0x3a6301e3 8.659644e-4       0x3a6301e2 8.6596434e-4      -1
+  57  0x3a482607 7.635061e-4       0x3a482606 7.6350605e-4      -1
+  58  0x3a3077b3 6.731704e-4       0x3a3077b3 6.731704e-4        0
+  59  0x3a1b96a6 5.935229e-4       0x3a1b96a6 5.935229e-4        0
+  60  0x3a092e06 5.232993e-4       0x3a092e02 5.232991e-4       -4
+  61  0x39f1e5ed 4.613841e-4       0x39f1e5e9 4.6138398e-4      -4
+  62  0x39d5470a 4.0679454e-4      0x39d54706 4.0679442e-4      -4
+  63  0x39bc0b0b 3.5866382e-4      0x39bc0b09 3.5866376e-4      -2
+  64  0x39a5cb60 3.162278e-4       0x39a5cb60 3.162278e-4        0
+  65  0x39922d98 2.788126e-4       0x39922d9a 2.7881266e-4      +2
+  66  0x3980e1fc 2.4582434e-4      0x3980e1fe 2.458244e-4       +2
+  67  0x3963447a 2.1673916e-4      0x3963447d 2.1673921e-4      +3
+  68  0x394860bc 1.9109523e-4      0x394860c1 1.910953e-4       +5
+  69  0x3930ab7b 1.684855e-4       0x3930ab7a 1.6848548e-4      -1
+  70  0x391bc44e 1.4855081e-4      0x391bc44e 1.4855081e-4       0
+  71  0x39095642 1.3097472e-4      0x39095642 1.3097472e-4       0
+  72  0x38f22ce0 1.1547818e-4      0x38f22ce2 1.1547819e-4      +2
+  73  0x38d58598 1.0181515e-4      0x38d5859b 1.01815174e-4     +3
+  74  0x38bc4233 8.976869e-5       0x38bc4236 8.976871e-5       +3
+  75  0x38a5fc02 7.914753e-5       0x38a5fc05 7.9147554e-5      +3
+  76  0x38925880 6.978307e-5       0x3892587e 6.9783055e-5      -2
+  77  0x388107d0 6.1526545e-5      0x388107cf 6.152654e-5       -1
+  78  0x3863872c 5.4246906e-5      0x3863872c 5.4246906e-5       0
+  79  0x38489b8d 4.7828584e-5      0x38489b8d 4.7828584e-5       0
+  80  0x3830df50 4.2169646e-5      0x3830df52 4.2169653e-5      +2
+  81  0x381bf201 3.7180263e-5      0x381bf202 3.7180267e-5      +1
+  82  0x38097e8d 3.2781205e-5      0x38097e8f 3.2781212e-5      +2
+  83  0x37f273ee 2.8902632e-5      0x37f273f1 2.8902637e-5      +3
+  84  0x37d5c43d 2.548296e-5       0x37d5c441 2.5482967e-5      +4
+  85  0x37bc7974 2.2467902e-5      0x37bc7973 2.24679e-5        -1
+  86  0x37a62cb9 1.9809568e-5      0x37a62cb9 1.9809568e-5       0
+  87  0x3792836f 1.746576e-5       0x3792836f 1.746576e-5        0
+  88  0x37812daa 1.5399262e-5      0x37812dab 1.5399264e-5      +1
+  89  0x3763c9ee 1.357727e-5       0x3763c9f0 1.3577272e-5      +2
+  90  0x3748d666 1.19708475e-5     0x3748d669 1.197085e-5       +3
+  91  0x37311333 1.0554492e-5      0x37311337 1.0554496e-5      +4
+  92  0x371c1fc5 9.3057215e-6      0x371c1fc4 9.305721e-6       -1
+  93  0x3709a6e8 8.204697e-6       0x3709a6e7 8.204696e-6       -1
+  94  0x36f2bb16 7.2339417e-6      0x36f2bb16 7.2339417e-6       0
+  95  0x36d602fc 6.3780444e-6      0x36d602fa 6.3780435e-6      -2
+  96  0x36bcb0bf 5.6234126e-6      0x36bcb0c1 5.6234135e-6      +2
+  97  0x36a65d7a 4.9580676e-6      0x36a65d7b 4.958068e-6       +1
+  98  0x3692ae6b 4.371444e-6       0x3692ae6d 4.371445e-6       +2
+  99  0x36815393 3.854229e-6       0x36815393 3.854229e-6        0
+ 100  0x36640cc6 3.3982083e-6      0x36640cc6 3.3982083e-6       0
+ 101  0x36491156 2.9961425e-6      0x36491157 2.9961427e-6      +1
+ 102  0x3631472e 2.6416487e-6      0x3631472c 2.6416483e-6      -2
+ 103  0x361c4d93 2.3290966e-6      0x361c4d93 2.3290966e-6       0
+ 104  0x3609cf4a 2.053525e-6       0x3609cf4a 2.053525e-6        0
+ 105  0x35f3024e 1.8105582e-6      0x35f30250 1.8105584e-6      +2
+ 106  0x35d641c4 1.5963383e-6      0x35d641c6 1.5963385e-6      +2
+ 107  0x35bce81e 1.4074647e-6      0x35bce81e 1.4074647e-6       0
+ 108  0x35a68e4c 1.2409378e-6      0x35a68e4c 1.2409378e-6       0
+ 109  0x3592d976 1.0941137e-6      0x3592d977 1.0941138e-6      +1
+ 110  0x35817986 9.646617e-7       0x35817985 9.646616e-7       -1
+ 111  0x35644fb1 8.5052585e-7      0x35644fb1 8.5052585e-7       0
+ 112  0x35494c56 7.498942e-7       0x35494c57 7.4989424e-7      +1
+ 113  0x35317b30 6.61169e-7        0x35317b31 6.6116905e-7      +1
+ 114  0x351c7b70 5.8294154e-7      0x351c7b70 5.8294154e-7       0
+ 115  0x3509f7bb 5.139697e-7       0x3509f7bb 5.139697e-7        0
+ 116  0x34f3499d 4.5315838e-7      0x34f3499d 4.5315838e-7       0
+ 117  0x34d680a4 3.9954205e-7      0x34d680a4 3.9954205e-7       0
+ 118  0x34bd1f8b 3.5226944e-7      0x34bd1f8c 3.5226947e-7      +1
+ 119  0x34a6bf2b 3.1059002e-7      0x34a6bf2b 3.1059002e-7       0
+ 120  0x3493048e 2.7384198e-7      0x3493048e 2.7384198e-7       0
+ 121  0x34819f83 2.4144182e-7      0x34819f83 2.4144182e-7       0
+ 122  0x346492ae 2.1287516e-7      0x346492ae 2.1287516e-7       0
+ 123  0x34498768 1.8768844e-7      0x34498767 1.8768843e-7      -1
+ 124  0x3431af44 1.6548171e-7      0x3431af44 1.6548171e-7       0
+ 125  0x341ca95a 1.4590242e-7      0x341ca95a 1.4590242e-7       0
+ 126  0x340a2036 1.286397e-7       0x340a2036 1.286397e-7        0
+ 127  0x33f390ff 1.1341944e-7      0x33f390ff 1.1341944e-7       0
+Dory full (theta 1e7, head dim 256): 72 of 128 words differ, largest 5 ulp, abs 5.960e-8, rel 4.449e-7
+failed command: ./.zig-cache/o/50be9e77894010f94cdb3d0e96ed126b/test --cache-dir=./.zig-cache --seed=0x19b123 --listen=-
+
+test
++- run test w
+[default] (warn): libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+[default] (warn): libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+failed command: ./.zig-cache/o/c114ad915d71621ee8a95445add5d377/test --cache-dir=./.zig-cache --seed=0x19b123 --listen=-
+
+discovery verbs: retained through TLS, atexit and destructor; child exit 0
+discovery grammar: retained through TLS, atexit and destructor; child exit 0
+1/7 qwen_cuda_weights_test.test.Qwen tower weights: existing MLX names and every byte match HF in one shard...OK
+2/7 qwen_cuda_weights_test.test.Qwen tower weights: indexed MLX fallback and sharded HF preserve every tensor...OK
+3/7 qwen_cuda_weights_test.test.Qwen tower weights: malformed selected shape and dtype fail without a fallback...model.visual.patch_embed.proj.weight: f16 { 2, 3, 2, 16, 16 }, expected bf16 { 2, 3, 2, 16, 16 }
+model.visual.patch_embed.proj.weight: bf16 { 2, 3, 2, 8, 32 }, expected bf16 { 2, 3, 2, 16, 16 }
+vision_tower.patch_embed.proj.weight: f16 { 2, 2, 16, 16, 3 }, expected bf16 { 2, 2, 16, 16, 3 }
+vision_tower.patch_embed.proj.weight: bf16 { 2, 2, 16, 8, 6 }, expected bf16 { 2, 2, 16, 16, 3 }
+OK
+4/7 qwen_cuda_weights_test.test.Qwen tower weights: missing selected tensor and unused selected tensors fail closed...checkpoint has no tensor vision_tower.blocks.0.mlp.linear_fc1.bias
+unused checkpoint tensor vision_tower.extra
+checkpoint has no tensor model.visual.blocks.0.mlp.linear_fc1.bias
+unused checkpoint tensor model.visual.extra
+OK
+5/7 qwen_cuda_weights_test.test.Qwen tower weights: HF patch keeps the authored precedence when both namespaces exist...OK
+6/7 qwen_cuda_weights_test.test.Qwen tower weights: every copy refusal and MLX retry release their host owners...OK
+7/7 qwen_cuda_weights_test.test.Qwen tower weights: allocation failures balance the fallback reader and transpose scratch...OK
+7 passed; 0 skipped; 0 failed.
+test
++- test-qwen4-host
+   +- run test w
+QSA_BACKWARD_COORD f64 gated=false rounded=false probes=528 absolute=1.29816250e-10 relative=4.76950849e-7
+QSA_BACKWARD_COORD f32 gated=false rounded=false probes=528 absolute=6.96454663e-8 relative=9.31322575e0
+QSA_BACKWARD_COORD f64 gated=true rounded=false probes=672 absolute=5.87818516e-10 relative=4.59835268e-7
+QSA_BACKWARD_COORD f64 gated=true rounded=true probes=672 absolute=5.86231313e-10 relative=1.73001302e-6
+QSA_BACKWARD_COORD f32 gated=true rounded=false probes=672 absolute=3.26035661e-8 relative=9.31322575e0
+QSA_BACKWARD_COORD f32 gated=true rounded=true probes=672 absolute=3.06754373e-8 relative=2.83598104e-5
+QSA_BACKWARD_DIRECTION f64 rows=1 heads=24 kv=4 width=256 selected=129 absolute=1.14769405e-11
+QSA_BACKWARD_DIRECTION f32 rows=1 heads=24 kv=4 width=256 selected=129 absolute=1.44041223e-9
+QSA_BACKWARD_DIRECTION f64 rows=1 heads=24 kv=4 width=256 selected=2051 absolute=1.75952593e-12
+QSA_BACKWARD_DIRECTION f32 rows=1 heads=24 kv=4 width=256 selected=2051 absolute=2.36923370e-10
+failed command: ./.zig-cache/o/cd0554e569230ec29636f5846438ee27/test --cache-dir=./.zig-cache --seed=0x19b123 --listen=-
+
+test
++- test-cuda-host
+   +- run test w
+N/A  dense gemm dense_gemm_block<DotBF16, 8> on gfx1030: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Small> on gfx1030: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Small> on gfx1100: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Small> on gfx1151: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Big> on gfx1030: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Big> on gfx1100: not served there
+N/A  dense gemm dense_wmma12_gemm<DotBF16, W12Big> on gfx1151: not served there
+failed command: ./.zig-cache/o/b09c004ef3b1092c6609e7053a93f821/test --cache-dir=./.zig-cache --seed=0x19b123 --listen=-
+
+test
++- test-cuda-host
+   +- run test w
+[default] (warn): libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+[default] (warn): libtfgrammar.dylib is required for structured output and required tool calls (HTTP 400 when missing); restore the matching release archive's lib/ directory or run zig build grammar -Dxgrammar=DIR; prepare DIR with git clone --branch v0.2.8 --recurse-submodules https://github.com/mlc-ai/xgrammar
+failed command: ./.zig-cache/o/25ec0aa3f91e20d6d9c74ae34b1f4967/test --cache-dir=./.zig-cache --seed=0x19b123 --listen=-
+
+Build Summary: 917/917 steps succeeded; 7417/7487 tests passed (70 skipped)
+dev-tools success
++- compile exe tf-lfm3-check debug native cached 53ms MaxRSS:33M
++- compile exe tf-merge-check fast native success 9s MaxRSS:461M
++- compile exe tf-metal-counters fast native cached 65ms MaxRSS:34M
+|  +- WriteFile nemotron_packed.metallib cached
+|     +- run xcrun (nemotron_packed.metallib) cached
+|        +- run xcrun (coop_down_1_0.air) cached
+|        +- run xcrun (coop_down_2_0.air) cached
+|        +- run xcrun (coop_down_2_1.air) cached
+|        +- run xcrun (coop_draft_1_0.air) cached
+|        +- run xcrun (coop_draft_2_0.air) cached
+|        +- run xcrun (coop_draft_2_1.air) cached
+|        +- run xcrun (coop_eh_1_0.air) cached
+|        +- run xcrun (coop_eh_1_0_sk.air) cached
+|        +- run xcrun (coop_eh_2_0.air) cached
+|        +- run xcrun (coop_eh_2_0_sk.air) cached
+|        +- run xcrun (coop_eh_2_1.air) cached
+|        +- run xcrun (coop_eh_2_1_sk.air) cached
+|        +- run xcrun (coop_head_1_0.air) cached
+|        +- run xcrun (coop_head_2_0.air) cached
+|        +- run xcrun (coop_head_2_1.air) cached
+|        +- run xcrun (coop_in_1_0.air) cached
+|        +- run xcrun (coop_in_1_0_sk.air) cached
+|        +- run xcrun (coop_in_2_0.air) cached
+|        +- run xcrun (coop_in_2_0_sk.air) cached
+|        +- run xcrun (coop_in_2_1.air) cached
+|        +- run xcrun (coop_in_2_1_sk.air) cached
+|        +- run xcrun (coop_out_1_0.air) cached
+|        +- run xcrun (coop_out_1_0_sk.air) cached
+|        +- run xcrun (coop_out_2_0.air) cached
+|        +- run xcrun (coop_out_2_0_sk.air) cached
+|        +- run xcrun (coop_out_2_1.air) cached
+|        +- run xcrun (coop_out_2_1_sk.air) cached
+|        +- run xcrun (coop_qkv_1_0.air) cached
+|        +- run xcrun (coop_qkv_2_0.air) cached
+|        +- run xcrun (coop_qkv_2_1.air) cached
+|        +- run xcrun (coop_up_1_0.air) cached
+|        +- run xcrun (coop_up_2_0.air) cached
+|        +- run xcrun (coop_up_2_1.air) cached
+|        +- run xcrun (up_relu2_1_0.air) cached
+|        +- run xcrun (up_relu2_2_0.air) cached
+|        +- run xcrun (up_relu2_2_1.air) cached
++- compile exe tf-metal-tests fast native cached 59ms MaxRSS:34M
+|  +- WriteFile tensorfold.metallib cached
+|     +- run xcrun (tensorfold.metallib) cached
+|        +- run xcrun (runtime_tests.air) cached
+|        +- run xcrun (nemotron_expert_up.air) cached
+|        +- run xcrun (nemotron_expert_down.air) cached
++- compile exe tf-dispatch-bench fast native cached 92ms MaxRSS:34M
+|  +- WriteFile tensorfold.metallib (+1 more reused dependencies)
++- compile exe tf-kernel-exact fast native cached 57ms MaxRSS:34M
+|  +- WriteFile tensorfold.metallib (+1 more reused dependencies)
++- compile exe tf-k3-check fast native success 9s MaxRSS:569M
+|  +- WriteFile kimi.metallib cached
+|  |  +- run xcrun (kimi.metallib) cached
+|  |     +- run xcrun (kimi_dense.air) cached
+|  |     +- run xcrun (kimi_dense_mma.air) cached
+|  |     +- run xcrun (kimi_norms.air) cached
+|  |     +- run xcrun (kimi_experts.air) cached
+|  |     +- run xcrun (kimi_kda.air) cached
+|  |     +- run xcrun (kimi_mla.air) cached
+|  |     +- run xcrun (kimi_synth.air) cached
+|  +- WriteFile draft_ids.txt cached
+|  +- WriteFile xsum.metal success
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-k3-bench fast native success 6s MaxRSS:478M
+|  +- WriteFile kimi.metallib (+1 more reused dependencies)
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-k3-tokenizer fast native cached 60ms MaxRSS:34M
++- compile exe tf-qwen35-check fast native success 8s MaxRSS:540M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig cached
+|  +- WriteFile drama3.metallib cached
+|     +- run xcrun (drama3.metallib) cached
+|        +- run xcrun (d3_dense.air) cached
+|        +- run xcrun (d3_gdn.air) cached
+|        +- run xcrun (d3_attn.air) cached
+|        +- run xcrun (d3_moe.air) cached
+|        +- run xcrun (d3_nvfp4.air) cached
+|        +- run xcrun (d3_guidance.air) cached
+|        +- run xcrun (d3_sample.air) cached
+|        +- run xcrun (d3_codec.air) cached
++- compile exe tf-qwen35-forward fast native success 8s MaxRSS:527M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-qwen35-exact fast native success 8s MaxRSS:543M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-lfm2-forward fast native success 9s MaxRSS:558M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-lfm2-bench fast native success 10s MaxRSS:626M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-lfm2-exact fast native success 10s MaxRSS:588M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-lfm2-fp64 fast native success 9s MaxRSS:552M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-nemotron-fixtures fast native success 13s MaxRSS:701M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-nemotron-bench fast native success 12s MaxRSS:693M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-nemotron-wide fast native success 22s MaxRSS:1G
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-nemotron-prefill-check fast native success 13s MaxRSS:783M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-nemotron-dense fast native success 8s MaxRSS:563M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-nemotron-experts fast native success 7s MaxRSS:528M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-nemotron-sample-check fast native success 6s MaxRSS:470M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-train-check fast native success 15s MaxRSS:838M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-train-pack fast native success 16s MaxRSS:882M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-pocket-fit-check fast native success 5s MaxRSS:447M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-flashnext-run fast native success 24s MaxRSS:1G
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-flashnext-pack fast native success 11s MaxRSS:647M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-flashnext-think fast native success 6s MaxRSS:473M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-grid-sync-bench fast native cached 63ms MaxRSS:34M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-weight-read-check fast native success 7s MaxRSS:502M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-glm-run fast native success 18s MaxRSS:874M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-glm-vision fast native success 10s MaxRSS:579M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-glm-video fast native success 7s MaxRSS:493M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-qwen-vision fast native success 9s MaxRSS:573M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-qwen-image fast native success 9s MaxRSS:542M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-moss-image fast native success 12s MaxRSS:689M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-moss-image-encoder fast native success 10s MaxRSS:595M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-moss-image-decoder fast native success 8s MaxRSS:532M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-glm-attn-probe fast native success 6s MaxRSS:455M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-moe-bench fast native cached 157ms MaxRSS:34M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-mm-bench fast native cached 65ms MaxRSS:34M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-sq-bench fast native cached 113ms MaxRSS:34M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-gemma4-kernels fast native success 9s MaxRSS:563M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-gemma4-glue fast native success 9s MaxRSS:564M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-gemma4-run fast native success 10s MaxRSS:615M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-gemma4-lanes fast native success 18s MaxRSS:881M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-gemma4-vision fast native success 11s MaxRSS:601M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-gemma4-bench fast native success 10s MaxRSS:600M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-gemma4-no-tensor fast native success 6s MaxRSS:479M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-spark-run fast native success 9s MaxRSS:571M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-minimax-run fast native success 9s MaxRSS:591M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-minimax-vision fast native success 9s MaxRSS:545M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-llama-run fast native success 9s MaxRSS:577M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-qwen36-row-seam fast native success 5s MaxRSS:444M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- WriteFile drama3_core.zig (reused)
+|  +- WriteFile drama3.metallib (+1 more reused dependencies)
++- compile exe tf-glm-sample-check debug native cached 65ms MaxRSS:34M
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-h3-dit fast native cached 62ms MaxRSS:34M
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-row-check fast native cached 58ms MaxRSS:34M
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-row-widths-check fast native success 6s MaxRSS:428M
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-tile-check fast native cached 62ms MaxRSS:34M
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-exl3-bench fast native success 6s MaxRSS:432M
+|  +- WriteFile exl3_projection.metal cached
++- compile exe tf-exlr8-check fast native cached 99ms MaxRSS:34M
+|  +- WriteFile exlr8_alias.zig cached
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-exlr8-bench fast native cached 59ms MaxRSS:34M
+|  +- WriteFile exlr8_alias.zig (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-exlr8-dense-check fast native cached 79ms MaxRSS:34M
+|  +- WriteFile exlr8_alias.zig (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-glm-dsa-layer-check fast native success 11s MaxRSS:667M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-glm-dsa-tp-check fast native success 9s MaxRSS:585M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-glm-dsa-run fast native success 13s MaxRSS:705M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-glm-dsa-bench fast native success 9s MaxRSS:552M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-glm-dsa-index-check fast native success 6s MaxRSS:455M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-exlr8-prompt-check fast native success 8s MaxRSS:524M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-glm-dsa-prompt-check fast native success 9s MaxRSS:558M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-core-lane-small safe native cached 76ms MaxRSS:34M
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-core-lane-reg-check safe native cached 62ms MaxRSS:34M
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-core-lane-check safe native cached 68ms MaxRSS:34M
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-deltanet-marks-check safe native cached 58ms MaxRSS:34M
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-lanes-see-check safe native cached 68ms MaxRSS:34M
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-run safe native success 8s MaxRSS:446M
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-attention-fused safe native success 7s MaxRSS:472M
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-attention-precision safe native success 6s MaxRSS:454M
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-projection-cases safe native success 6s MaxRSS:382M
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-dflash-run safe native success 9s MaxRSS:488M
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-empty-keep safe native success 13s MaxRSS:798M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-synthetic safe native success 14s MaxRSS:804M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-dflash-synthetic safe native success 15s MaxRSS:844M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-widths safe native success 7s MaxRSS:520M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-dflash-refine safe native success 19s MaxRSS:988M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-speed-served safe native success 33s MaxRSS:1G
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-served-check safe native success 28s MaxRSS:1G
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-dflash-served-check safe native success 29s MaxRSS:1G
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-lanes-check safe native success 23s MaxRSS:1G
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-lanes-run safe native success 25s MaxRSS:1G
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-bench safe native success 17s MaxRSS:924M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-classes safe native success 10s MaxRSS:637M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-streams safe native success 16s MaxRSS:896M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-reuse safe native success 33s MaxRSS:1G
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-marks safe native success 32s MaxRSS:1G
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-runtime safe native success 14s MaxRSS:792M
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-weights safe native success 8s MaxRSS:498M
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-qwen27-dflash-inspect safe native success 8s MaxRSS:494M
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-affine-ref fast native success 6s MaxRSS:456M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-rotary-sweep safe native success 7s MaxRSS:485M
++- compile exe tf-rotary-cache-check safe native success 7s MaxRSS:462M
++- compile exe tf-kernel-contract fast native success 49s MaxRSS:2G
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-glm-rows-check fast native success 8s MaxRSS:523M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-glm-rows-speed fast native success 7s MaxRSS:526M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-flashnext-widths fast native success 10s MaxRSS:581M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-flashnext-reuse fast native success 28s MaxRSS:1G
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-flashnext-batch fast native success 29s MaxRSS:1G
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-cluster fast native success 12s MaxRSS:648M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-k3-validate fast native success 10s MaxRSS:559M
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-k3-cluster fast native success 6s MaxRSS:457M
+|  +- WriteFile kimi.metallib (+1 more reused dependencies)
+|  +- WriteFile draft_ids.txt (reused)
+|  +- WriteFile xsum.metal (reused)
+|  +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- compile exe tf-tp2-bench fast native cached 327ms MaxRSS:34M
++- compile exe tf-mcdma-pair safe native cached 58ms MaxRSS:33M
++- compile exe tf-mcdma-pair safe aarch64-macos.26.0 cached 50ms MaxRSS:33M
++- compile exe tf-mcdma-pair safe aarch64-linux-gnu.2.35 cached 50ms MaxRSS:33M
++- compile exe tf-mcdma-pair safe x86_64-linux-gnu.2.35 cached 50ms MaxRSS:33M
+fuzz-cortheon success
++- run test 20 pass (20 total) 11s MaxRSS:8M
+   +- compile test safe native success 8s MaxRSS:490M
+test-golden success
++- run exe golden_check success 1m
+|  +- compile exe golden_check debug native cached 188ms MaxRSS:33M
+|  +- compile exe fake_serve debug native success 9s MaxRSS:1G
++- run exe golden_check success 9s
+   +- compile exe golden_check debug native (reused)
+   +- compile exe fake_serve debug native (reused)
+test-kernel-contract success
++- run test 127 pass (127 total) 1s MaxRSS:8M
+|  +- compile test debug native success 5s MaxRSS:393M
++- run test cached
+|  +- compile test debug native cached 187ms MaxRSS:33M
++- test-gemma4-contract-host success
+|  +- run test 9 pass (9 total) 11s MaxRSS:12M
+|  |  +- compile test debug native success 1s MaxRSS:303M
+|  |     +- WriteFile gemma4-host-empty.metallib cached
+|  +- test-glm-window-contract-host success
+|     +- run test 19 pass (19 total) 16s MaxRSS:8M
+|        +- compile test debug native success 1s MaxRSS:295M
+|           +- WriteFile gemma4-host-empty.metallib (reused)
++- run test cached
+|  +- compile test debug native cached 186ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 160ms MaxRSS:33M
++- run test 7 pass (7 total) 614ms MaxRSS:52M
+|  +- compile test debug native success 1s MaxRSS:276M
++- run test 3 pass (3 total) 115ms MaxRSS:3M
+|  +- compile test debug native success 1s MaxRSS:276M
++- run test 9 pass (9 total) 543ms MaxRSS:5M
+   +- compile test debug native success 2s MaxRSS:313M
+test success
++- test-gguf-host success
+|  +- run test cached
+|  |  +- compile test debug native cached 61ms MaxRSS:33M
+|  +- run test cached
+|     +- compile test fast native cached 83ms MaxRSS:33M
++- test-qwen27-gguf-host success
+|  +- run test cached
+|  |  +- compile test debug native cached 54ms MaxRSS:33M
+|  +- run test cached
+|     +- compile test fast native cached 54ms MaxRSS:33M
++- run test 8 pass, 1 skip (9 total) 298ms MaxRSS:13M
+|  +- compile test debug native success 1s MaxRSS:327M
+|     +- options cached
++- run test 8 pass, 1 skip (9 total) 118ms MaxRSS:12M
+|  +- compile test fast native success 8s MaxRSS:463M
+|     +- options (reused)
++- run test 8 pass, 2 skip (10 total) 288ms MaxRSS:8M
+|  +- compile test debug native success 1s MaxRSS:341M
++- run test 8 pass, 2 skip (10 total) 114ms MaxRSS:7M
+|  +- compile test fast native success 10s MaxRSS:515M
++- test-qwen4-host success
+|  +- run test 113 pass (113 total) 2m MaxRSS:234M
+|     +- compile test debug native success 5s MaxRSS:762M
+|        +- WriteFile qwen4_hc_native_host.cpp cached
+|        +- WriteFile qwen4_gdn_native_host.cpp cached
+|        +- WriteFile qwen4_gdn_cuda_host.cpp cached
+|        +- WriteFile qwen4_ple_native_host.cpp cached
+|        +- WriteFile qwen4_ple_cuda_host.cpp cached
+|        +- WriteFile qwen4_qsa_norm_host.cpp cached
+|        +- WriteFile qwen4_qsa_scores_host.cpp cached
+|        +- WriteFile qwen4_qsa_select_host.cpp cached
+|        +- WriteFile qwen4_qsa_attn_host.cpp cached
+|        +- WriteFile qwen4_node_attention.cpp cached
+|        +- WriteFile qwen4_cuda_attention_host.cpp cached
++- test-qwen4-gdn-host success
+|  +- run test 10 pass (10 total) 420ms MaxRSS:7M
+|     +- compile test debug native success 1s MaxRSS:390M
+|        +- WriteFile qwen4_hc_native_host.cpp (reused)
+|        +- WriteFile qwen4_gdn_native_host.cpp (reused)
+|        +- WriteFile qwen4_gdn_cuda_host.cpp (reused)
+|        +- WriteFile qwen4_ple_native_host.cpp (reused)
+|        +- WriteFile qwen4_ple_cuda_host.cpp (reused)
+|        +- WriteFile qwen4_qsa_norm_host.cpp (reused)
+|        +- WriteFile qwen4_qsa_scores_host.cpp (reused)
+|        +- WriteFile qwen4_qsa_select_host.cpp (reused)
+|        +- WriteFile qwen4_qsa_attn_host.cpp (reused)
+|        +- WriteFile qwen4_node_attention.cpp (reused)
+|        +- WriteFile qwen4_cuda_attention_host.cpp (reused)
+|        +- options cached
++- test-qwen4-projection-host success
+|  +- run test 9 pass (9 total) 121ms MaxRSS:3M
+|     +- compile test debug native success 1s MaxRSS:323M
+|        +- options (reused)
++- test-qwen4-projection-bodies success
+|  +- compile obj qwen4-projection-bodies debug native success 4s MaxRSS:631M
+|     +- WriteFile qwen4_hc_native_host.cpp (reused)
+|     +- WriteFile qwen4_gdn_native_host.cpp (reused)
+|     +- WriteFile qwen4_gdn_cuda_host.cpp (reused)
+|     +- WriteFile qwen4_ple_native_host.cpp (reused)
+|     +- WriteFile qwen4_ple_cuda_host.cpp (reused)
+|     +- WriteFile qwen4_qsa_norm_host.cpp (reused)
+|     +- WriteFile qwen4_qsa_scores_host.cpp (reused)
+|     +- WriteFile qwen4_qsa_select_host.cpp (reused)
+|     +- WriteFile qwen4_qsa_attn_host.cpp (reused)
+|     +- WriteFile qwen4_node_attention.cpp (reused)
+|     +- WriteFile qwen4_cuda_attention_host.cpp (reused)
+|     +- options (reused)
++- test-qwen4-cuda-bodies success
+|  +- compile obj qwen4-cuda-aarch64 debug aarch64-linux-gnu success 4s MaxRSS:611M
+|  |  +- options cached
+|  +- compile obj qwen4-cuda-x86_64 debug x86_64-linux-gnu success 810ms MaxRSS:248M
+|     +- options cached
++- run test cached
+|  +- compile test debug native cached 54ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 63ms MaxRSS:34M
++- run test cached
+|  +- compile test debug native cached 81ms MaxRSS:34M
++- test-kernel-symbols-host success
+|  +- run test 3 pass (3 total) 7s MaxRSS:107M
+|     +- compile test debug native cached 52ms MaxRSS:33M
++- test-checkpoint-security success
+|  +- run test cached
+|  |  +- compile test safe native cached 60ms MaxRSS:33M
+|  +- run test 47 pass, 1 skip (48 total) 141ms MaxRSS:15M
+|  |  +- compile test safe native success 9s MaxRSS:531M
+|  +- run test cached
+|  |  +- compile test safe native cached 85ms MaxRSS:34M
+|  +- run test cached
+|     +- compile test safe native cached 60ms MaxRSS:33M
++- test-quant-geometry-host success
+|  +- run test 98 pass, 1 skip (99 total) 1s MaxRSS:17M
+|     +- compile test debug native success 2s MaxRSS:404M
++- test-stage success
+|  +- run test 20 pass (20 total) 794ms MaxRSS:146M
+|     +- compile test debug native success 1s MaxRSS:283M
++- test-stage-compile success
+|  +- compile test debug aarch64-linux success 187ms MaxRSS:107M
+|  +- compile test debug aarch64-macos success 165ms MaxRSS:103M
++- run test cached
+|  +- compile test debug native cached 58ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 68ms MaxRSS:34M
++- run test cached
+|  +- compile test debug native cached 52ms MaxRSS:33M
++- run test 4 pass (4 total) 118ms MaxRSS:2M
+|  +- compile test fast aarch64-macos-none success 5s MaxRSS:370M
++- run test cached
+|  +- compile test debug native cached 67ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 52ms MaxRSS:33M
+|     +- options cached
+|        +- compile exe digest-writer debug native cached 54ms MaxRSS:33M
++- run test 6 pass (6 total) 2ms MaxRSS:3M
+|  +- compile test debug native cached 55ms MaxRSS:33M
++- run test 23 pass (23 total) 946ms MaxRSS:24M
+|  +- compile test debug native success 1s MaxRSS:356M
+|     +- WriteFile flashnext-test-empty.zig cached
++- test-flashnext-scheduling-host success
+|  +- run test 53 pass (53 total) 21s MaxRSS:184M
+|     +- compile test debug native success 3s MaxRSS:540M
+|        +- WriteFile flashnext-test-empty.zig (reused)
++- run test 17 pass (17 total) 138ms MaxRSS:3M
+|  +- compile test debug native success 1s MaxRSS:289M
+|     +- WriteFile flashnext-test-empty.zig (reused)
++- run test 16 pass (16 total) 99ms MaxRSS:3M
+|  +- compile test debug native success 1s MaxRSS:290M
+|     +- WriteFile flashnext-test-empty.zig (reused)
++- test-flashnext-batch-host success
+|  +- run test 16 pass (16 total) 1s MaxRSS:32M
+|     +- compile test debug native success 2s MaxRSS:430M
+|        +- WriteFile flashnext-test-empty.zig (reused)
++- test-flashnext-mtp-plan-host success
+|  +- run test cached
+|     +- compile test debug native cached 56ms MaxRSS:33M
++- test-lfm3-host success
+|  +- run test cached
+|  |  +- compile test debug native cached 50ms MaxRSS:33M
+|  +- run test cached
+|     +- compile test debug native cached 50ms MaxRSS:33M
++- run test 12 pass (12 total) 125ms MaxRSS:7M
+|  +- compile test debug native success 1s MaxRSS:347M
+|     +- WriteFile nemotron_packed.metallib cached
+|        +- WriteFile budget-compile-only.metallib cached
++- run test cached
+|  +- compile test debug native cached 51ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 56ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 53ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 52ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 55ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 58ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 64ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 138ms MaxRSS:34M
++- run test 35 pass (35 total) 99ms MaxRSS:6M
+|  +- compile test fast native success 10s MaxRSS:560M
+|     +- WriteFile drama3.metallib cached
+|        +- run xcrun (drama3.metallib) cached
+|           +- run xcrun (d3_dense.air) cached
+|           +- run xcrun (d3_gdn.air) cached
+|           +- run xcrun (d3_attn.air) cached
+|           +- run xcrun (d3_moe.air) cached
+|           +- run xcrun (d3_nvfp4.air) cached
+|           +- run xcrun (d3_guidance.air) cached
+|           +- run xcrun (d3_sample.air) cached
+|           +- run xcrun (d3_codec.air) cached
++- run test 228 pass, 1 skip (229 total) 3s MaxRSS:26M
+|  +- compile test fast native success 26s MaxRSS:1G
+|     +- WriteFile draft_ids.txt (reused)
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test 146 pass, 1 skip (147 total) 297ms MaxRSS:16M
+|  +- compile test fast native success 21s MaxRSS:946M
++- run test 115 pass, 1 skip (116 total) 276ms MaxRSS:15M
+|  +- compile test fast native success 14s MaxRSS:697M
++- run test 156 pass, 1 skip (157 total) 293ms MaxRSS:16M
+|  +- compile test fast native success 22s MaxRSS:970M
++- run test cached
+|  +- compile test fast native cached 56ms MaxRSS:34M
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test cached
+|  +- compile test fast native cached 57ms MaxRSS:34M
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- test-metal-kv-pages success
+|  +- run test 39 pass (39 total) 157ms MaxRSS:15M
+|  |  +- compile test fast native success 7s MaxRSS:465M
+|  |     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- run test cached
+|  |  +- compile test fast native cached 56ms MaxRSS:34M
+|  |     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|  +- run test cached
+|     +- compile test fast native cached 57ms MaxRSS:34M
+|        +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- test-exl3 success
+|  +- compile obj exl3_metal_loader debug native success 189ms MaxRSS:98M
+|  |  +- WriteFile exl3_projection.metal (reused)
+|  +- run test 11 pass (11 total) 123ms MaxRSS:7M
+|  |  +- compile test fast native success 6s MaxRSS:426M
+|  |     +- WriteFile exl3_projection.metal (reused)
+|  +- run test 2 pass (2 total) 103ms MaxRSS:6M
+|     +- compile test fast native success 5s MaxRSS:401M
+|        +- WriteFile exl3_projection.metal (reused)
++- run test cached
+|  +- compile test fast native cached 67ms MaxRSS:34M
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test 36 pass, 15 skip (51 total) 6s MaxRSS:24M
+|  +- compile test safe native success 23s MaxRSS:1G
+|     +- WriteFile exlr8_alias.zig cached
+|     +- WriteFile drama3_core.zig (reused)
+|     +- WriteFile draft_ids.txt (reused)
+|     +- WriteFile xsum.metal (reused)
+|     +- WriteFile drama3.metallib (+1 more reused dependencies)
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test cached
+|  +- compile test safe native cached 67ms MaxRSS:34M
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test cached
+|  +- compile test fast native cached 56ms MaxRSS:34M
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test cached
+|  +- compile test fast native cached 66ms MaxRSS:34M
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test cached
+|  +- compile test safe native cached 61ms MaxRSS:34M
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test cached
+|  +- compile test safe native cached 52ms MaxRSS:33M
++- run test cached
+|  +- compile test safe native cached 64ms MaxRSS:34M
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test cached
+|  +- compile test safe native cached 58ms MaxRSS:33M
++- run test cached
+|  +- compile test safe native cached 52ms MaxRSS:33M
++- run test cached
+|  +- compile test safe native cached 57ms MaxRSS:34M
++- run test 150 pass (150 total) 208ms MaxRSS:24M
+|  +- compile test safe native success 14s MaxRSS:764M
+|     +- WriteFile xsum.metal (reused)
+|     +- WriteFile xsum.metal (reused)
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test cached
+|  +- compile test safe native cached 50ms MaxRSS:33M
++- run test cached
+|  +- compile test safe native cached 59ms MaxRSS:34M
++- run sh success 175ms
+|  +- compile exe tensorfold-native safe native success 2m MaxRSS:5G
+|     +- options cached
+|     +- WriteFile drama_prompt.zig cached
+|     +- WriteFile draft_ids.txt (reused)
+|     +- WriteFile xsum.metal (reused)
+|     +- WriteFile drama3_core.zig (reused)
+|     +- WriteFile exlr8_alias.zig cached
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
+|     +- WriteFile drama3.metallib (+1 more reused dependencies)
++- run test 1040 pass, 4 skip (1044 total) 2m MaxRSS:214M
+|  +- compile test debug native success 16s MaxRSS:1G
++- run test cached
+|  +- compile test debug native cached 59ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 74ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 59ms MaxRSS:33M
++- run test cached
+|  +- compile test fast native cached 69ms MaxRSS:34M
++- run test cached
+|  +- compile test fast native cached 62ms MaxRSS:34M
++- run test cached
+|  +- compile test fast native cached 61ms MaxRSS:34M
+|     +- WriteFile tensorfold.metallib (+1 more reused dependencies)
++- run test 1006 pass, 7 skip (1013 total) 11s MaxRSS:426M
+|  +- compile test fast native success 1m MaxRSS:3G
+|     +- WriteFile draft_ids.txt (reused)
+|     +- WriteFile xsum.metal (reused)
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test cached
+|  +- compile test fast native cached 82ms MaxRSS:33M
++- run test cached
+|  +- compile test fast native cached 55ms MaxRSS:33M
++- run test cached
+|  +- compile test fast native cached 59ms MaxRSS:33M
++- run test 19 pass (19 total) 112ms MaxRSS:7M
+|  +- compile test fast native success 8s MaxRSS:559M
+|     +- WriteFile draft_ids.txt (reused)
+|     +- WriteFile xsum.metal (reused)
+|     +- WriteFile nemotron_packed.metallib (+1 more reused dependencies)
++- run test cached
+|  +- compile test fast native cached 49ms MaxRSS:33M
++- test-gemma4-attention-backward-host success
+|  +- run test cached
+|     +- compile test debug native cached 53ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 59ms MaxRSS:34M
+|     +- WriteFile xsum.metal cached
++- test-check-release-paths success
+|  +- check-release-paths refuses zig-source success 120ms
+|  |  +- compile exe check-release-paths fast native success 2s MaxRSS:213M
+|  |  +- WriteFile bin/tensorfold-native cached
+|  |     +- WriteFile zig-source cached
+|  +- check-release-paths refuses home success 120ms
+|  |  +- compile exe check-release-paths fast native (reused)
+|  |  +- WriteFile bin/tensorfold-native cached
+|  |     +- WriteFile home cached
+|  +- check-release-paths refuses metal-header-1.1.7 success 9ms
+|  |  +- compile exe check-release-paths fast native (reused)
+|  |  +- WriteFile bin/tensorfold-native cached
+|  |     +- WriteFile metal-header-1.1.7 cached
+|  +- check-release-paths passes a clean binary success 120ms
+|     +- compile exe check-release-paths fast native (reused)
+|     +- WriteFile bin/tensorfold-native cached
+|        +- WriteFile clean cached
++- run test cached
+|  +- compile test debug native cached 60ms MaxRSS:33M
++- run test cached
+|  +- compile test fast native cached 58ms MaxRSS:33M
++- run test 30 pass, 2 skip (32 total) 95ms MaxRSS:45M
+|  +- compile test debug native cached 55ms MaxRSS:34M
+|     +- options cached
++- run test cached
+|  +- compile test debug native cached 58ms MaxRSS:34M
+|  |  +- options cached
+|  +- compile obj tp_host_compile debug aarch64-linux-gnu cached 50ms MaxRSS:33M
+|     +- options cached
++- test-cuda-host success
+|  +- run test 2 pass (2 total) 129ms MaxRSS:4M
+|  |  +- compile test debug native success 1s MaxRSS:330M
+|  +- run test cached
+|  |  +- compile test debug native cached 82ms MaxRSS:33M
+|  +- run test 12 pass (12 total) 146ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:293M
+|  +- run test 2 pass (2 total) 113ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:269M
+|  +- run exe runtime-discovery-exit success 16ms
+|  |  +- compile exe runtime-discovery-exit debug native cached 59ms MaxRSS:33M
+|  |     +- options cached
+|  |        +- compile lib runtime-discovery-mock debug native cached 128ms MaxRSS:33M
+|  +- run exe rpc-warning-check success 7ms
+|  |  +- compile exe rpc-warning-check debug native cached 54ms MaxRSS:33M
+|  |     +- options cached
+|  |        +- compile lib rpc-mock-complete debug native cached 53ms MaxRSS:33M
+|  |        +- compile lib rpc-mock-abi debug native cached 54ms MaxRSS:33M
+|  |        +- compile lib rpc-mock-wait debug native cached 54ms MaxRSS:33M
+|  |        +- compile lib rpc-mock-store debug native cached 57ms MaxRSS:33M
+|  |        +- compile lib rpc-mock-wrong debug native cached 65ms MaxRSS:33M
+|  +- run test 12 pass (12 total) 118ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:290M
+|  |     +- options (+5 more reused dependencies)
+|  +- run exe grammar-warning-check success 7ms
+|  |  +- compile exe grammar-warning-check debug native cached 71ms MaxRSS:33M
+|  |     +- options cached
+|  +- run test cached
+|  |  +- compile test debug native cached 88ms MaxRSS:33M
+|  |     +- options cached
+|  +- run test cached
+|  |  +- compile test debug native cached 65ms MaxRSS:33M
+|  |     +- options cached
+|  |        +- compile lib picture-codec-wrong debug native cached 55ms MaxRSS:33M
+|  +- run test cached
+|  |  +- compile test debug native cached 55ms MaxRSS:33M
+|  |     +- options cached
+|  |        +- compile lib picture-codec-symbols debug native cached 55ms MaxRSS:33M
+|  +- run test cached
+|  |  +- compile test debug native cached 56ms MaxRSS:33M
+|  |     +- options cached
+|  |        +- compile lib picture-codec-ready debug native cached 71ms MaxRSS:33M
+|  +- run test cached
+|  |  +- compile test debug native cached 82ms MaxRSS:33M
+|  +- run test cached
+|  |  +- compile test debug native cached 56ms MaxRSS:33M
+|  +- run test cached
+|  |  +- compile test debug native cached 55ms MaxRSS:33M
+|  +- run test 32 pass (32 total) 46ms MaxRSS:4M
+|  |  +- compile test debug native cached 55ms MaxRSS:34M
+|  |     +- WriteFile h3-compile-only.fatbin cached
+|  |     +- options cached
+|  +- test-prompt-bf16-host success
+|  |  +- run test 21 pass (21 total) 3ms MaxRSS:3M
+|  |  |  +- compile test debug native cached 74ms MaxRSS:33M
+|  |  |     +- options (reused)
+|  |  +- run test 3 pass (3 total) 113ms MaxRSS:3M
+|  |  |  +- compile test debug native success 1s MaxRSS:302M
+|  |  |     +- options (reused)
+|  |  +- run test 21 pass (21 total) 7ms MaxRSS:2M
+|  |  |  +- compile test fast native cached 58ms MaxRSS:33M
+|  |  |     +- options cached
+|  |  +- run test 3 pass (3 total) 105ms MaxRSS:2M
+|  |     +- compile test fast native success 6s MaxRSS:412M
+|  |        +- options (reused)
+|  +- test-gdn-chain-host success
+|  |  +- run test 19 pass (19 total) 8ms MaxRSS:3M
+|  |  |  +- compile test debug native cached 71ms MaxRSS:34M
+|  |  |     +- options (reused)
+|  |  +- run test 2 pass (2 total) 124ms MaxRSS:4M
+|  |  |  +- compile test debug native success 3s MaxRSS:325M
+|  |  |     +- options (reused)
+|  |  +- run test 19 pass (19 total) 7ms MaxRSS:2M
+|  |  |  +- compile test fast native cached 56ms MaxRSS:34M
+|  |  |     +- options cached
+|  |  +- run test 2 pass (2 total) 110ms MaxRSS:2M
+|  |     +- compile test fast native success 9s MaxRSS:416M
+|  |        +- options (reused)
+|  +- test-moe-router-host success
+|  |  +- run test 19 pass (19 total) 8ms MaxRSS:3M
+|  |  |  +- compile test debug native cached 97ms MaxRSS:33M
+|  |  |     +- options (reused)
+|  |  +- run test 3 pass (3 total) 153ms MaxRSS:4M
+|  |  |  +- compile test debug native success 1s MaxRSS:298M
+|  |  |     +- options (reused)
+|  |  +- run test 19 pass (19 total) 5ms MaxRSS:2M
+|  |  |  +- compile test fast native cached 102ms MaxRSS:34M
+|  |  |     +- options cached
+|  |  +- run test 3 pass (3 total) 115ms MaxRSS:3M
+|  |     +- compile test fast native success 6s MaxRSS:399M
+|  |        +- options (reused)
+|  +- test-cuda-load-cache-host success
+|  |  +- run test 16 pass (16 total) 167ms MaxRSS:4M
+|  |  |  +- compile test debug native success 1s MaxRSS:309M
+|  |  +- run test cached
+|  |  |  +- compile test debug native cached 51ms MaxRSS:33M
+|  |  +- run test cached
+|  |  |  +- compile test debug native cached 55ms MaxRSS:33M
+|  |  +- run test cached
+|  |     +- compile test debug native cached 55ms MaxRSS:33M
+|  +- run test 13 pass (13 total) 124ms MaxRSS:4M
+|  |  +- compile test debug native success 1s MaxRSS:350M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 3 pass (3 total) 441ms MaxRSS:70M
+|  |  +- compile test debug native success 1s MaxRSS:290M
+|  +- run test 4 pass (4 total) 155ms MaxRSS:4M
+|  |  +- compile test debug native success 1s MaxRSS:288M
+|  +- run test cached
+|  |  +- compile test debug native cached 88ms MaxRSS:33M
+|  +- run test cached
+|  |  +- compile test debug native cached 102ms MaxRSS:34M
+|  +- run test 6 pass (6 total) 124ms MaxRSS:4M
+|  |  +- compile test debug native success 3s MaxRSS:314M
+|  |     +- WriteFile qwen4_projection.fatbin cached
+|  |     +- WriteFile dsv41_exl3_experts.fatbin cached
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- WriteFile dsv41_exl3_experts.fatbin (reused)
+|  |     +- options cached
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- options cached
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  |     +- WriteFile qwen4_projection.fatbin (reused)
+|  +- run test success 1s
+|  |  +- compile test debug native success 1s MaxRSS:317M
+|  +- run test 19 pass (19 total) 171ms MaxRSS:4M
+|  |  +- compile test debug native success 3s MaxRSS:536M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 10 pass (10 total) 302ms MaxRSS:38M
+|  |  +- compile test debug native success 1s MaxRSS:341M
+|  +- run test 14 pass (14 total) 145ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:320M
+|  |     +- options (reused)
+|  +- run test 4 pass (4 total) 114ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:313M
+|  |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  +- run test 13 pass (13 total) 120ms MaxRSS:3M
+|  |  +- compile test debug native success 2s MaxRSS:389M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 16 pass (16 total) 222ms MaxRSS:4M
+|  |  +- compile test debug native success 1s MaxRSS:332M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 110 pass (110 total) 9s MaxRSS:38M
+|  |  +- compile test debug native success 3s MaxRSS:584M
+|  |     +- options (reused)
+|  +- run test 3 pass (3 total) 153ms MaxRSS:4M
+|  |  +- compile test debug native success 1s MaxRSS:326M
+|  |     +- options (reused)
+|  +- run test 1 pass (1 total) 103ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:292M
+|  |     +- options (reused)
+|  +- run test 11 pass (11 total) 171ms MaxRSS:4M
+|  |  +- compile test debug native success 1s MaxRSS:359M
+|  |     +- options (reused)
+|  +- run test 5 pass (5 total) 315ms MaxRSS:7M
+|  |  +- compile test debug native success 1s MaxRSS:342M
+|  |     +- options (reused)
+|  +- test-glm-contract-host success
+|  |  +- run test 7 pass (7 total) 221ms MaxRSS:5M
+|  |     +- compile test debug native success 1s MaxRSS:303M
+|  |        +- options (reused)
+|  +- run test 37 pass, 3 skip (40 total) 827ms MaxRSS:8M
+|  |  +- compile test debug native success 2s MaxRSS:486M
+|  |     +- options (reused)
+|  +- run test 14 pass (14 total) 118ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:303M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 13 pass (13 total) 125ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:302M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 14 pass (14 total) 135ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:312M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 3 pass (3 total) 285ms MaxRSS:4M
+|  |  +- compile test debug native success 1s MaxRSS:348M
+|  |     +- options success
+|  |     |  +- compile exe qwen-round-timing-probe debug native success 2s MaxRSS:374M
+|  |     |     +- WriteFile draft_ids.txt (reused)
+|  |     |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 14 pass (14 total) 128ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:306M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 12 pass (12 total) 1s MaxRSS:13M
+|  |  +- compile test debug native success 1s MaxRSS:312M
+|  |     +- options (reused)
+|  +- run test 3 pass (3 total) 110ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:298M
+|  |     +- options (reused)
+|  +- run test 5 pass (5 total) 114ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:322M
+|  |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  +- run test 10 pass (10 total) 126ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:366M
+|  |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  +- run test 6 pass (6 total) 131ms MaxRSS:4M
+|  |  +- compile test debug native success 1s MaxRSS:333M
+|  |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  +- run test 4 pass (4 total) 181ms MaxRSS:13M
+|  |  +- compile test debug native success 1s MaxRSS:314M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 10 pass (10 total) 1s MaxRSS:15M
+|  |  +- compile test debug native success 2s MaxRSS:447M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 12 pass (12 total) 308ms MaxRSS:9M
+|  |  +- compile test debug native success 1s MaxRSS:324M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- compile obj exl3_host_compile debug native success 205ms MaxRSS:121M
+|  |  +- options (reused)
+|  +- run test 17 pass (17 total) 22s MaxRSS:87M
+|  |  +- compile test debug native success 1s MaxRSS:338M
+|  |     +- options (reused)
+|  +- run test 9 pass (9 total) 647ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:307M
+|  |     +- options (reused)
+|  +- run test 2 pass (2 total) 120ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:301M
+|  |     +- options (reused)
+|  +- run test 11 pass (11 total) 403ms MaxRSS:26M
+|  |  +- compile test debug native success 1s MaxRSS:315M
+|  |     +- options (reused)
+|  +- run test 26 pass (26 total) 132ms MaxRSS:3M
+|  |  +- compile test debug native success 2s MaxRSS:416M
+|  |     +- options (reused)
+|  +- run test 6 pass (6 total) 185ms MaxRSS:5M
+|  |  +- compile test debug native success 1s MaxRSS:302M
+|  |     +- options (reused)
+|  +- run test 8 pass (8 total) 121ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:292M
+|  |     +- options (reused)
+|  +- run test 2 pass (2 total) 104ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:295M
+|  |     +- options (reused)
+|  +- run test 5 pass (5 total) 117ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:291M
+|  |     +- options (reused)
+|  +- run test 2 pass (2 total) 118ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:281M
+|  |     +- options (reused)
+|  +- run test 3 pass (3 total) 114ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:288M
+|  |     +- options (reused)
+|  +- run test 3 pass (3 total) 120ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:283M
+|  |     +- options (reused)
+|  +- run test 3 pass (3 total) 117ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:285M
+|  |     +- options (reused)
+|  +- run test 9 pass (9 total) 119ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:306M
+|  |     +- options (reused)
+|  +- run test 1 pass (1 total) 118ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:287M
+|  |     +- options (reused)
+|  +- run test 1 pass (1 total) 120ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:283M
+|  |     +- options (reused)
+|  +- run test 1 pass (1 total) 120ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:286M
+|  |     +- options (reused)
+|  +- run test cached
+|  |  +- compile test debug native cached 83ms MaxRSS:33M
+|  |     +- options (reused)
+|  +- run test cached
+|  |  +- compile test debug native cached 85ms MaxRSS:33M
+|  +- run test 8 pass (8 total) 126ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:282M
+|  +- run test 3 pass (3 total) 169ms MaxRSS:5M
+|  |  +- compile test debug native success 1s MaxRSS:280M
+|  +- run test 8 pass (8 total) 131ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:290M
+|  +- run test 1 pass (1 total) 116ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:279M
+|  |     +- options (reused)
+|  +- run test 1 pass (1 total) 110ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:287M
+|  |     +- options (reused)
+|  +- run test success 118ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:283M
+|  |     +- options (reused)
+|  +- run test 9 pass (9 total) 172ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:294M
+|  |     +- options (reused)
+|  +- run test 4 pass (4 total) 102ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:288M
+|  |     +- options (reused)
+|  +- run test 1 pass (1 total) 141ms MaxRSS:4M
+|  |  +- compile test debug native success 1s MaxRSS:297M
+|  |     +- options (reused)
+|  +- run test 4 pass (4 total) 105ms MaxRSS:2M
+|  |  +- compile test fast native success 5s MaxRSS:389M
+|  |     +- options (reused)
+|  +- run test 1 pass (1 total) 109ms MaxRSS:3M
+|  |  +- compile test fast native success 6s MaxRSS:398M
+|  |     +- options (reused)
+|  +- compile obj bolt_host_compile debug aarch64-linux-gnu success 394ms MaxRSS:153M
+|  |  +- options cached
+|  |  +- WriteFile draft_ids.txt (reused)
+|  +- run test cached
+|  |  +- compile test debug native cached 67ms MaxRSS:33M
+|  +- run test 40 pass (40 total) 537ms MaxRSS:6M
+|  |  +- compile test debug native success 2s MaxRSS:392M
+|  |     +- options (reused)
+|  +- run test cached
+|  |  +- compile test debug native cached 74ms MaxRSS:34M
+|  +- run test 15 pass (15 total) 18s MaxRSS:168M
+|  |  +- compile test debug native success 3s MaxRSS:536M
+|  |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  +- run test 4 pass (4 total) 117ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:300M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 4 pass (4 total) 956ms MaxRSS:5M
+|  |  +- compile test debug native success 2s MaxRSS:519M
+|  |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  +- run exe qwen-cost-key-process success 464ms
+|  |  +- compile exe qwen-cost-key-process debug native success 1s MaxRSS:337M
+|  |  |  +- WriteFile draft_ids.txt (reused)
+|  |  |  +- options (reused)
+|  |  +- WriteFile target/config.json cached
+|  +- run test 1 pass (1 total) 126ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:312M
+|  +- compile obj drama_cuda_native_host debug native success 377ms MaxRSS:138M
+|  |  +- options (reused)
+|  +- run test 11 pass (11 total) 148ms MaxRSS:3M
+|  |  +- compile test debug native success 2s MaxRSS:429M
+|  |     +- options (reused)
+|  +- run test 9 pass (9 total) 122ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:369M
+|  |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  +- run test 13 pass (13 total) 123ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:373M
+|  |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  +- run test cached
+|  |  +- compile test debug native cached 87ms MaxRSS:34M
+|  +- run test 30 pass (30 total) 6s MaxRSS:11M
+|  |  +- compile test debug native success 3s MaxRSS:640M
+|  |     +- WriteFile exlr8_alias.zig cached
+|  |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  +- run test 5 pass (5 total) 748ms MaxRSS:10M
+|  |  +- compile test debug native success 1s MaxRSS:329M
+|  +- run test 6 pass (6 total) 126ms MaxRSS:4M
+|  |  +- compile test debug native success 1s MaxRSS:328M
+|  +- run test cached
+|  |  +- compile test debug native cached 82ms MaxRSS:33M
+|  +- run test 1040 pass, 4 skip (1044 total) 2m MaxRSS:214M
+|  |  +- compile test debug native success 17s MaxRSS:1G
+|  +- run test cached
+|  |  +- compile test debug native cached 86ms MaxRSS:33M
+|  +- run test cached
+|  |  +- compile test debug native cached 93ms MaxRSS:33M
+|  |     +- options (reused)
+|  +- run test 544 pass, 9 skip (553 total) 27s MaxRSS:194M
+|  |  +- compile test debug native success 8s MaxRSS:808M
+|  +- run test cached
+|  |  +- compile test debug native cached 55ms MaxRSS:34M
+|  +- run test 84 pass, 1 skip (85 total) 5s MaxRSS:50M
+|  |  +- compile test debug native success 3s MaxRSS:560M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 145 pass, 2 skip (147 total) 9s MaxRSS:71M
+|  |  +- compile test debug native success 5s MaxRSS:730M
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- options (reused)
+|  +- run test 12 pass (12 total) 130ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:339M
+|  |     +- options (reused)
+|  +- run test 199 pass (199 total) 4s MaxRSS:142M
+|  |  +- compile test debug native success 4s MaxRSS:717M
+|  |     +- options (reused)
+|  +- run test 13 pass, 2 skip (15 total) 4s MaxRSS:15M
+|  |  +- compile test debug native success 2s MaxRSS:411M
+|  |     +- options (reused)
+|  +- run test 31 pass (31 total) 4s MaxRSS:1G
+|  |  +- compile test debug native success 2s MaxRSS:380M
+|  |     +- options (reused)
+|  +- run test cached
+|  |  +- compile test debug native cached 55ms MaxRSS:33M
+|  +- run test cached
+|  |  +- compile test debug native cached 64ms MaxRSS:33M
+|  +- run test cached
+|  |  +- compile test debug native cached 55ms MaxRSS:34M
+|  +- run test 148 pass, 2 skip (150 total) 19s MaxRSS:194M
+|  |  +- compile test debug native success 14s MaxRSS:1G
+|  |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  +- run test cached
+|  |  +- compile test debug native cached 65ms MaxRSS:33M
+|  +- run test 1 pass (1 total) 125ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:283M
+|  +- run test cached
+|  |  +- compile test debug native cached 80ms MaxRSS:34M
+|  |     +- options (reused)
+|  +- run test cached
+|  |  +- compile test debug native cached 56ms MaxRSS:33M
+|  +- run test 9 pass (9 total) 109ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:303M
+|  |     +- options (reused)
+|  +- run test 15 pass (15 total) 147ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:320M
+|  |     +- options (reused)
+|  +- run test 11 pass (11 total) 118ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:337M
+|  |     +- options (reused)
+|  +- run test 12 pass (12 total) 165ms MaxRSS:5M
+|  |  +- compile test debug native success 5s MaxRSS:540M
+|  |     +- options (reused)
+|  +- run test 3 pass (3 total) 137ms MaxRSS:4M
+|  |  +- compile test debug native success 2s MaxRSS:404M
+|  |     +- options (reused)
+|  +- run test 2 pass (2 total) 102ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:328M
+|  |     +- options (reused)
+|  +- run test 2 pass (2 total) 160ms MaxRSS:4M
+|  |  +- compile test debug native success 3s MaxRSS:533M
+|  |     +- options (reused)
+|  +- run test 11 pass (11 total) 123ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:313M
+|  |     +- options (reused)
+|  +- run test 181 pass, 1 skip (182 total) 7s MaxRSS:76M
+|  |  +- compile test debug native success 4s MaxRSS:715M
+|  |     +- options (reused)
+|  +- run test 22 pass, 1 skip (23 total) 158ms MaxRSS:5M
+|  |  +- compile test debug native success 1s MaxRSS:368M
+|  |     +- options (reused)
+|  +- run test 55 pass (55 total) 3s MaxRSS:38M
+|  |  +- compile test debug native success 3s MaxRSS:505M
+|  |     +- options (reused)
+|  +- run test 6 pass (6 total) 994ms MaxRSS:190M
+|  |  +- compile test debug native success 1s MaxRSS:355M
+|  |     +- options (reused)
+|  +- run test 11 pass (11 total) 133ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:314M
+|  |     +- options (reused)
+|  +- run test cached
+|  |  +- compile test debug native cached 62ms MaxRSS:33M
+|  +- run test 16 pass (16 total) 120ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:307M
+|  +- run test cached
+|  |  +- compile test debug native cached 92ms MaxRSS:33M
+|  +- run test 26 pass (26 total) 328ms MaxRSS:31M
+|  |  +- compile test debug native success 6s MaxRSS:923M
+|  +- run test cached
+|  |  +- compile test debug native cached 59ms MaxRSS:33M
+|  +- run test 66 pass, 2 skip (68 total) 1s MaxRSS:24M
+|  |  +- compile test debug native success 2s MaxRSS:459M
+|  +- run test 1 pass (1 total) 124ms MaxRSS:3M
+|  |  +- compile test debug native success 1s MaxRSS:327M
+|  |     +- options (reused)
+|  |     +- options (reused)
+|  |     +- WriteFile draft_ids.txt (reused)
+|  |     +- WriteFile exlr8_alias.zig cached
+|  +- run test 13 pass (13 total) 121ms MaxRSS:3M
+|     +- compile test debug native success 1s MaxRSS:368M
+|        +- WriteFile exlr8_alias.zig cached
+|        +- options (reused)
+|        +- WriteFile draft_ids.txt (reused)
++- run test 2 pass (2 total) 116ms MaxRSS:3M
+|  +- compile test debug native success 1s MaxRSS:320M
+|     +- options cached
+|     +- options cached
+|     +- WriteFile draft_xpu_images.zig cached
+|     +- WriteFile rope_freq.zig cached
++- run test 1 pass (1 total) 116ms MaxRSS:3M
+|  +- compile test debug native success 1s MaxRSS:302M
++- run test 5 pass (5 total) 110ms MaxRSS:3M
+|  +- compile test debug native success 1s MaxRSS:305M
+|     +- options (reused)
++- run test 14 pass, 1 skip (15 total) 164ms MaxRSS:4M
+|  +- compile test debug native success 1s MaxRSS:316M
+|     +- options (reused)
++- run test 3 pass (3 total) 121ms MaxRSS:3M
+|  +- compile test debug native success 1s MaxRSS:282M
+|     +- options (reused)
++- run test cached
+|  +- compile test debug native cached 50ms MaxRSS:33M
++- run test 6 pass (6 total) 123ms MaxRSS:3M
+|  +- compile test debug native success 1s MaxRSS:304M
++- run test 25 pass (25 total) 631ms MaxRSS:8M
+|  +- compile test debug native success 1s MaxRSS:319M
++- run test 1 pass (1 total) 135ms MaxRSS:3M
+|  +- compile test debug native success 1s MaxRSS:276M
+|     +- WriteFile draft_xpu_images.zig (reused)
++- run test cached
+|  +- compile test debug native cached 64ms MaxRSS:33M
++- test-kv-pool success
+|  +- run test 28 pass (28 total) 316ms MaxRSS:4M
+|  |  +- compile test debug native success 1s MaxRSS:280M
+|  +- run test 10 pass (10 total) 3s MaxRSS:35M
+|     +- compile test debug native success 2s MaxRSS:436M
++- run test 37 pass, 2 skip (39 total) 342ms MaxRSS:8M
+|  +- compile test debug native success 2s MaxRSS:386M
++- run test cached
+|  +- compile test safe native cached 52ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 62ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 67ms MaxRSS:34M
++- run test 27 pass (27 total) 222ms MaxRSS:10M
+|  +- compile test debug native success 1s MaxRSS:344M
++- run exe learned-warning-test success 11ms
+|  +- compile exe learned-warning-test debug native cached 77ms MaxRSS:33M
++- run test cached
+|  +- compile test debug native cached 82ms MaxRSS:33M
+|     +- options cached
++- test-bf16-round success
+|  +- run test cached
+|     +- compile test debug native cached 52ms MaxRSS:33M
++- test-qwen35-layers success
+|  +- run test cached
+|     +- compile test debug native cached 55ms MaxRSS:33M
++- test-profile success
+   +- run test cached
+      +- compile test debug native cached 74ms MaxRSS:33M
+

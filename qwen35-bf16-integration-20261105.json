@@ -1,0 +1,139 @@
+{
+  "kind": "refreshed-integration-host-supplement",
+  "head": "47dd8cadc6f09ece60dd72613630c839b44bfe21",
+  "main": "9200a3064153b8041930f61f5ba92102d4bea692",
+  "parent": "d19ff3f075eb144870af1af159de1eccafd0b69b",
+  "native_diagnostic_producer": "9416f0cf94bddbea49becb4c14047d0c16d08faf",
+  "qwen_cuda_family_and_all_cuda_kernel_source_bytes_identical_to_native_producer": true,
+  "host": {
+    "platform": "macOS",
+    "command": "zig build test test-kernel-contract test-golden fuzz-cortheon dev-tools --test-timeout 10m -j8 --summary all",
+    "exit": 0,
+    "build_steps": 917,
+    "steps_passed": 917,
+    "executed_tests": 7487,
+    "passed": 7417,
+    "skipped": 70,
+    "other_results": "cached"
+  },
+  "lean": {
+    "same_checker": true,
+    "base": 425,
+    "head": 425,
+    "new": 0
+  },
+  "format_check": "passed",
+  "diff_check": "passed",
+  "atc": {
+    "coverage_complete": false,
+    "limitations": [
+      "pullFilesLimit"
+    ],
+    "scan_time_utc": "2026-11-05 09:21:45 UTC",
+    "conflicts_reported_by_scan": [
+      1446,
+      1445,
+      1522,
+      1444,
+      1443,
+      1442,
+      1441
+    ],
+    "read_only_merge_proof": [
+      {
+        "pull_request": 1441,
+        "candidate_conflict_files": [
+          "zig/kernels/cuda/contract_controls.cu",
+          "zig/tests/cuda/contract_limits.zig"
+        ],
+        "additional_files_beyond_main_or_main_plus_parent": []
+      },
+      {
+        "pull_request": 1442,
+        "candidate_conflict_files": [
+          "zig/kernels/cuda/contract_controls.cu",
+          "zig/tests/cuda/contract_limits.zig"
+        ],
+        "additional_files_beyond_main_or_main_plus_parent": []
+      },
+      {
+        "pull_request": 1443,
+        "candidate_conflict_files": [
+          "zig/kernels/cuda/contract_controls.cu",
+          "zig/tests/cuda/contract_limits.zig"
+        ],
+        "additional_files_beyond_main_or_main_plus_parent": []
+      },
+      {
+        "pull_request": 1444,
+        "candidate_conflict_files": [
+          "zig/kernels/cuda/contract_controls.cu",
+          "zig/tests/cuda/contract_limits.zig"
+        ],
+        "additional_files_beyond_main_or_main_plus_parent": []
+      },
+      {
+        "pull_request": 1445,
+        "candidate_conflict_files": [
+          "zig/kernels/cuda/contract_controls.cu",
+          "zig/tests/cuda/contract_limits.zig"
+        ],
+        "additional_files_beyond_main_or_main_plus_parent": []
+      },
+      {
+        "pull_request": 1446,
+        "candidate_conflict_files": [
+          "zig/kernels/cuda/contract_controls.cu",
+          "zig/tests/cuda/contract_limits.zig"
+        ],
+        "additional_files_beyond_main_or_main_plus_parent": []
+      },
+      {
+        "pull_request": 1522,
+        "candidate_conflict_files": [
+          "zig/kernels/cuda/contract_controls.cu",
+          "zig/tests/cuda/contract_limits.zig"
+        ],
+        "additional_files_beyond_main_or_main_plus_parent": []
+      },
+      {
+        "pull_request": 2011,
+        "candidate_conflict_files": [
+          "CHANGELOG.md",
+          "zig/src/families/qwen3_5/cuda_prompt.zig"
+        ],
+        "additional_files_beyond_main_or_main_plus_parent": []
+      },
+      {
+        "pull_request": 2115,
+        "candidate_conflict_files": [
+          "zig/build/stage.zig",
+          "zig/src/fabric/stage/frame.zig",
+          "zig/src/fabric/stage/ring.zig",
+          "zig/src/fabric/stage/ring_test.zig",
+          "zig/src/fabric/stage/secret.zig",
+          "zig/src/fabric/stage/stage.zig",
+          "zig/src/families/qwen3_5/cuda_engine.zig",
+          "zig/src/families/qwen3_5/cuda_shapes.zig",
+          "zig/src/families/qwen3_5/cuda_weights.zig"
+        ],
+        "additional_files_beyond_main_or_main_plus_parent": []
+      }
+    ],
+    "local_checkout_warning": "another preserved checkout of the same PR"
+  },
+  "host_log": {
+    "file": "qwen35-bf16-integration-host-20261105.log",
+    "bytes": 111781,
+    "sha256": "a638705a7ee71efda36545826215289d295b20a9f9b2c397362a671512cb7db2"
+  },
+  "publication_transforms": [
+    "Host log normalizes checkout and user prefixes; diagnostics, exits and numeric results are unchanged."
+  ],
+  "stage_limits": [
+    "This is a host/source-identity supplement, not a new device execution.",
+    "Prior device, CPU-reference, build/audit and performance producers retain their exact original source IDs.",
+    "Exact-head hosted format and No GPU runs are queued; no hosted pass is claimed.",
+    "The layer-0 numerical excess remains failed; this supplement changes no tolerance."
+  ]
+}

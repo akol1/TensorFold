@@ -50,3 +50,10 @@ The final-source plain build and five-SM CPU resource audit pass. The latest com
 This supplement is a diagnostic on one sm_120 GPU with CPU references. It contains no new performance run or whole-model-equivalence claim. The earlier complete CUDA and serving receipts retain their actual older producer; a complete device suite was not rerun on the rebased head.
 
 The 217-file supplement, including 198 numeric tensors, was reviewed for private identifiers and credentials. Tensor bytes are unchanged; archive identity fields are cleared, and the supplemental host log normalizes local checkout/user prefixes. Public contributor aliases and numerical failures are retained.
+
+
+## Refreshed integration on current main
+
+`qwen35-bf16-integration-20261105.json` and its full host log bind the later integration head `47dd8cadc6f09ece60dd72613630c839b44bfe21` to main `9200a3064153b8041930f61f5ba92102d4bea692` and refreshed parent `d19ff3f075eb144870af1af159de1eccafd0b69b`. The complete Qwen CUDA family and all CUDA kernel sources are byte-identical to the measured native producer.
+
+The refreshed macOS host/contract/golden/fuzz/developer-tool command passes: 917/917 build steps, 7417/7487 executed tests passed, 70 skipped, other results cached; same-checker lean 425/425, zero new. The partial ATC conflicts reproduce on main or main plus the parent. These are host/source-identity checks, not new device or performance executions. Exact-head hosted CI was queued when this supplement was recorded. Earlier archives and producer identities remain unchanged.

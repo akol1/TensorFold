@@ -33,3 +33,20 @@ Private infrastructure identifiers, user paths, contacts, credentials and applic
 Archive owner/group names are empty and IDs/timestamps zero. Every extracted member is hash-verified. This review covers the submitted publication; earlier cached copies outside it have their own scope.
 
 `SHA256SUMS` pins all eight files. PR #2020 retains summary receipts and reproduction commands, with immutable links to these files.
+
+
+## 20261105 layer diagnostic
+
+The 32-input-token fixture is captured at embedding, all 64 residual boundaries and final normalization. The primary rule covers the 31 hidden rows used by served prompt scores; all 32 input rows are retained separately.
+
+The first exceeding residual is zero-based **layer 0**: native-to-FP32 worst **0.07647705078125**, against Transformers BF16-to-FP32 worst **0.056326866149902344**. Embeddings match exactly. The simple maximum rule fails at 18/64 residual layers. Final normalization falls inside its own hidden-state maximum, which does not waive the separately failing served-logprob comparison. No tolerance is changed, and this does not establish a single faulty accumulation or a format floor.
+
+Extract all three `qwen35-bf16-layers-*-20261105.tar.gz` archives into the same directory. The native archive includes the shared metadata, exact IDs, complete comparison, build/capture logs and source identities. The other two archives hold the 66 BF16-arm and 66 promoted-FP32-arm arrays. The manifest checks every archive/member and binds the comparison script to its source.
+
+Native capture producer: `9416f0cf94bddbea49becb4c14047d0c16d08faf`; Transformers capture producer: `b54d8ff7691385fe420399e72272c932a881e29e`; served-row comparison: `c6930073d5192663bd5726ff74a8fa426f7a06aa`; main base: `002c9e03eecf9b10b83a73b9149dc7f49d50368a`. Capture passes its traced/untraced logit identity check. Both reference arms pass their independent cross-checks, preserve all 96 stored FP32 parameters, and all 11 checkpoint shard hashes match pinned public LFS after capture. Original running deployments and active-service health were restored.
+
+The final-source plain build and five-SM CPU resource audit pass. The latest complete reference test suite passes 20/20 with its ML dependencies; the superseded partial-export setup errors remain in the packet.
+
+This supplement is a diagnostic on one sm_120 GPU with CPU references. It contains no new performance run or whole-model-equivalence claim. The earlier complete CUDA and serving receipts retain their actual older producer; a complete device suite was not rerun on the rebased head.
+
+The 217-file supplement, including 198 numeric tensors, was reviewed for private identifiers and credentials. Tensor bytes are unchanged; archive identity fields are cleared, and the supplemental host log normalizes local checkout/user prefixes. Public contributor aliases and numerical failures are retained.

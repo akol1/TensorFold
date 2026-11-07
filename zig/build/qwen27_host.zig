@@ -77,7 +77,7 @@ pub fn tests(b: *std.Build, test_step: *std.Build.Step) void {
     b.step("test-qwen27-resume-host", "Slot 0's in-place resume and rewind point: the cache's rule, with no GPU").dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = resume_rules, .filters = &.{"qwen27 resume:"} })).step);
 }
 
-pub fn compileHost(b: *std.Build, metal: *std.Build.Module, engine: *std.Build.Module, lanes: *std.Build.Module, build_options: ?*std.Build.Step.Options) void {
+pub fn compileHost(b: *std.Build, metal: *std.Build.Module, engine: *std.Build.Module, lanes: *std.Build.Module, build_options: ?*std.Build.Module) void {
     const ownership = b.createModule(.{ .root_source_file = b.path("zig/src/native/qwen27_engine.zig"), .target = b.graph.host, .link_libc = true, .imports = &.{.{ .name = "tensorfold", .module = engine }} });
     b.step("test-qwen-dense-route-host", "Existing 2B route and untied 9B and 27B route without weights").dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = ownership, .filters = &.{"a qwen3_5 checkpoint opens"} })).step);
     var dense_names: std.ArrayList([]const u8) = .empty;
@@ -86,7 +86,7 @@ pub fn compileHost(b: *std.Build, metal: *std.Build.Module, engine: *std.Build.M
     b.step("test-qwen-dense-geometry-host", "Dense config and full-size packed headers without shaders or a GPU").dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = engine, .filters = dense_names.items })).step);
     const api = b.createModule(.{ .root_source_file = b.path("zig/src/core/engine_api.zig"), .target = b.graph.host, .link_libc = true, .imports = &.{.{ .name = "lanes", .module = lanes }} });
     const host = b.createModule(.{ .root_source_file = b.path("zig/src/native/qwen27_served.zig"), .target = b.graph.host, .link_libc = true, .imports = &.{ .{ .name = "metal", .module = metal }, .{ .name = "tensorfold", .module = engine }, .{ .name = "engine_api", .module = api } } });
-    if (build_options) |opts| host.addOptions("build_options", opts);
+    if (build_options) |opts| host.addImport("build_options", opts);
     // pair refusals are decided before a model loads: the host's own tests run on CPU alone
     const served = b.step("test-qwen27-served-host", "Rank 1's named refusal and the pair's --vision refusal, no shaders or GPU");
     const served_run = b.addRunArtifact(b.addTest(.{ .root_module = host }));

@@ -14,6 +14,9 @@ pub const segments = @import("src/core/segments.zig");
 pub const checkpoint_host = checkpoint;
 pub const lane_projection = @import("core_lane");
 
+/// A checkpoint's identity digest (config, index and shard headers), so two ranks can compare theirs.
+pub const checkpoint_identity = @import("src/core/checkpoint_identity.zig");
+
 pub const gpu_profile = @import("src/core/gpu_profile.zig");
 
 pub const row_projection = @import("core_row");

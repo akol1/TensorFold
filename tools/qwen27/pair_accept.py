@@ -6,8 +6,10 @@ cold  one chat turn, then that conversation's next turn: the pair must report no
       pair runs no prompt cache (its one slot's states are two Macs', so the serve enables none)
 
 The oracle (qwen38_27b_oracle.json, next to this file) is the single-Mac, undrafted, temperature-0 record, made on
-the GPU family it names: run refuses a Mac in any other family, because before the M5 the bits come from simd_qmm
-and on the M5 from the lane kernels with their own K splits, so one family's token_sha cannot accept the other.
+the GPU family it names: run refuses a serve whose Mac is in any other family, because before the M5 the bits come
+from simd_qmm and on the M5 from the lane kernels with their own K splits, so one family's token_sha cannot accept
+the other. The family is read from each rank's own serve (/health's device), not the Mac this script runs on: run
+from rank 0 or from a third machine, the pair itself is what the gate checks, so --peer-url must reach rank 1.
 A pair passes when the same token ids come out, so neither Mac's rank count nor the seam can show up in the text.
 One chat case carries two turns: turn 1 is a recorded reply, fed back as the assistant message, so the decoded span
 an earlier reply produced is part of the prompt the pair must reproduce.
@@ -16,7 +18,6 @@ different value would hide exactly the pair-only divergence this run exists to c
 """
 import argparse
 import json
-import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -65,51 +66,51 @@ def load_oracle(path):
         return json.load(handle)
 
 
-def gpu_family():
-    """This Mac's Metal family, "apple-m<generation>", or None when it cannot be read.
+def server_device(base, timeout):
+    """The GPU family a rank's own serve reports (/health's device), or None when it names none.
 
-    Mirrors the engine: zig/src/native/metal.zig chip() names the family "apple-m<d>" from the Metal device name,
-    which is the same "Apple M4 Pro" sysctl reports and the string tensorfold-native capabilities --json prints.
-    sysctl answers before a serve is up, so acceptance can refuse another family before it sends a request.
+    Mirrors the engine: zig/src/native/metal.zig chip() names the family "apple-m<d>" from the Metal device
+    name, which is the same string tensorfold-native capabilities --json prints and /health reports as device.
+    Reading it from each rank's serve makes the gate check the pair itself, not the Mac this script runs on.
     """
     try:
-        result = subprocess.run(
-            ["sysctl", "-n", "machdep.cpu.brand_string"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-    except (OSError, subprocess.SubprocessError):
+        with urllib.request.urlopen(base.rstrip("/") + "/health", timeout=timeout) as reply:
+            if reply.status != 200:
+                return None
+            return json.load(reply).get("device")
+    except (urllib.error.URLError, json.JSONDecodeError, OSError):
         return None
-    if result.returncode != 0:
-        return None
-    words = result.stdout.decode("utf-8", "replace").split()
-    if len(words) < 2 or words[0] != "Apple" or len(words[1]) < 2:
-        return None
-    name = words[1]
-    if not name.startswith("M") or not name[1:].isdigit():
-        return None
-    return "apple-m{}".format(int(name[1:]))
 
 
-def family_refusal(oracle):
-    """Why this Mac may not accept this record, or None when it is the GPU family the oracle names."""
-    recorded = oracle.get("gpu_family")
+def rank_refusal(recorded, rank, base, timeout):
+    """Why `rank`'s serve may not carry this oracle, or None when its Mac is the family the oracle names."""
     if not isinstance(recorded, str) or not recorded:
         return "the oracle records no gpu_family, so it cannot accept a pair on any Mac; re-record it on rank 0's Mac"
-    family = gpu_family()
+    family = server_device(base, timeout)
     if family is None:
-        return "this Mac's GPU family cannot be read (sysctl machdep.cpu.brand_string), so the oracle cannot accept it"
+        return (
+            "{}'s serve ({}) did not report its GPU family on /health, so the gate cannot check the pair itself;"
+            " start both ranks first (pair_supervise.sh up) or point --peer-url at rank 1"
+        ).format(rank, base)
     if family == recorded:
         return None
     return (
-        "the oracle was recorded on {} but this Mac is {}: before the M5 the bits come from simd_qmm and on the M5"
-        " from the lane kernels with their own K splits, so {}'s token_sha cannot accept a pair on {}. Record the"
-        " oracle on rank 0's Mac (record_oracle.py) or run acceptance on a Mac in the recorded family"
-    ).format(recorded, family, recorded, family)
+        "the oracle was recorded on {} but {}'s serve ({}) reports {}: before the M5 the bits come from simd_qmm"
+        " and on the M5 from the lane kernels with their own K splits, so {}'s token_sha cannot accept a pair on {}."
+        " Record the oracle on rank 0's Mac (record_oracle.py) or run acceptance against a pair in the recorded family"
+    ).format(recorded, rank, base, family, recorded, family)
 
 
-def run(base, oracle, model, repeat, timeout, only):
-    refusal = family_refusal(oracle)
+def pair_refusal(oracle, base, peer, timeout):
+    """Why this pair may not accept this record, checking each rank's own serve."""
+    refusal = rank_refusal(oracle.get("gpu_family"), "rank 0", base, timeout)
+    if refusal is not None:
+        return refusal
+    return rank_refusal(oracle.get("gpu_family"), "rank 1", peer, timeout)
+
+
+def run(base, oracle, model, repeat, timeout, only, peer):
+    refusal = pair_refusal(oracle, base, peer, timeout)
     if refusal is not None:
         print("pair_accept: " + refusal, file=sys.stderr)
         return 2
@@ -150,7 +151,7 @@ def cached_tokens(reply):
     return value if value is not None else usage.get("cached_tokens")
 
 
-def cold(base, oracle, model, timeout):
+def cold(base, oracle, model, timeout, peer):
     """Two turns of one conversation: the pair must report no prompt state reused between them.
 
     A pair runs no prompt cache at all (`qwen27_served.attach`: a pair's slots are one and its prompt states are
@@ -158,6 +159,10 @@ def cold(base, oracle, model, timeout):
     count here would mean a pair kept one Mac's states and served them as the other's: a wrong answer, not a
     faster one. This pin fails if the count ever becomes positive without the shard handling the cache needs.
     """
+    refusal = pair_refusal(oracle, base, peer, timeout)
+    if refusal is not None:
+        print("pair_accept: " + refusal, file=sys.stderr)
+        return 2
     case = next((c for c in oracle["cases"] if c["name"].startswith("chat")), None)
     if case is None:
         print("pair_accept: the oracle has no chat case to build a conversation from", file=sys.stderr)
@@ -199,6 +204,7 @@ def main():
     for name in ("run", "cold"):
         p = sub.add_parser(name)
         p.add_argument("--base-url", default="http://127.0.0.1:4100")
+        p.add_argument("--peer-url", default="http://127.0.0.1:4101")
         p.add_argument("--oracle", default="tools/qwen27/qwen38_27b_oracle.json")
         p.add_argument("--model", default=DEFAULT_MODEL)
         p.add_argument("--timeout", type=float, default=600.0)
@@ -209,8 +215,8 @@ def main():
     oracle = load_oracle(args.oracle)
     try:
         if args.command == "run":
-            return run(args.base_url, oracle, args.model, args.repeat, args.timeout, args.only)
-        return cold(args.base_url, oracle, args.model, args.timeout)
+            return run(args.base_url, oracle, args.model, args.repeat, args.timeout, args.only, args.peer_url)
+        return cold(args.base_url, oracle, args.model, args.timeout, args.peer_url)
     except urllib.error.URLError as err:
         print("pair_accept: {} did not answer: {}".format(args.base_url, err), file=sys.stderr)
         return 2

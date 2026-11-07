@@ -176,6 +176,11 @@ The lane switch accepts only 0 or 1; the copy switch accepts only 0 or 1. Invali
 Speed-up mode splits one Qwen3.8-27B reply across two Macs over a Thunderbolt 5 cable: both Macs hold the same
 `TensorFold/Qwen3.8-27B-MLX-4bit` checkpoint, each serves it from its own directory with its own settings file, and
 rank 1 starts before rank 0.
+The name is about memory, not speed: on the pair this recipe qualified (an Apple M4 Max as rank 0 and a second
+`apple-m4` Mac as rank 1, both on the Thunderbolt 5 link the settings files name), one Mac of the same pair decoded
+the checkpoint at 14.41 tok/s while the pair served it at 4.58 tok/s, about 3.15 times slower. A pair spreads the
+weights across two Macs' memory; it does not decode faster, and nobody should turn it on expecting the opposite.
+These numbers come from that acceptance run, and a fix that removes a pair's per-token waits can change them.
 Speed-up mode is opt-in: a one-Mac serve passes no `--speed-up` and keeps its defaults, and both ranks of a pair pass
 their settings file.
 [Speed-up mode](../speed-up-mode.md) builds the server, sets up MCDMA and writes the two settings files; this
